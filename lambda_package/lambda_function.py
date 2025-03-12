@@ -3,6 +3,7 @@ import logging
 import os
 from typing import Dict, Optional
 import pandas as pd
+import boto3
 from binance.um_futures import UMFutures
 from order_processor import create_order_with_sl_tp
 
@@ -12,6 +13,8 @@ logging.basicConfig(
     format='%(filename)s:%(funcName)s - %(levelname)s - %(message)s'
 )
 
+# Initialize AWS Lambda client
+lambda_client = boto3.client('lambda')
 
 def parse_yaml(yaml_string: str) -> Dict[str, str]:
     """Parse YAML-like string into a dictionary."""
@@ -26,7 +29,6 @@ def parse_yaml(yaml_string: str) -> Dict[str, str]:
         logging.error(f"Error parsing YAML: {str(e)}")
     return data
 
-
 def get_binance_client() -> Optional[UMFutures]:
     """Get Binance client."""
     try:
@@ -40,59 +42,60 @@ def get_binance_client() -> Optional[UMFutures]:
         logging.error(f"Failed to create Binance client: {str(e)}")
         return None
 
-
-def calculate_macd(client: UMFutures, symbol: str, interval: str = "1m",
+def calculate_macd(client: UMFutures, symbol: str, interval: str = "5m",
                    fast_length: int = 18, slow_length: int = 39, signal_length: int = 15) -> Dict:
-    """Calculate MACD with given parameters using Binance 1m klines."""
+    """Calculate MACD with given parameters using Binance 5m klines."""
     try:
-        # Fetch klines (candlestick data) from Binance
-        # We need enough data points for the slow EMA (39 periods + some buffer)
         klines = client.klines(symbol=symbol, interval=interval, limit=100)
-
-        # Convert klines to DataFrame
-        # Binance klines format: [timestamp, open, high, low, close, volume, ...]
         df = pd.DataFrame(klines, columns=[
             'timestamp', 'open', 'high', 'low', 'close', 'volume',
             'close_time', 'quote_asset_volume', 'trades', 'taker_buy_base',
             'taker_buy_quote', 'ignored'
         ])
-
-        # log latest close price
         logging.info(f"Latest Close Price: {df['close'].iloc[-1]}")
-
-        # Convert close prices to float
         df['close'] = df['close'].astype(float)
-
-        # Calculate EMAs
         ema_fast = df['close'].ewm(span=fast_length, adjust=False).mean()
         ema_slow = df['close'].ewm(span=slow_length, adjust=False).mean()
-
-        # MACD Line = Fast EMA - Slow EMA
         macd_line = ema_fast - ema_slow
-
-        # Signal Line = EMA of MACD Line
         signal_line = macd_line.ewm(span=signal_length, adjust=False).mean()
-
-        # Histogram = MACD Line - Signal Line
         histogram = macd_line - signal_line
-
-        # Get the latest values
         latest_macd = macd_line.iloc[-1]
         latest_signal = signal_line.iloc[-1]
         latest_histogram = histogram.iloc[-1]
-
         logging.info(f"MACD Calculated - MACD: {latest_macd}, Signal: {latest_signal}, Histogram: {latest_histogram}")
-
         return {
             "macd": latest_macd,
             "signal": latest_signal,
             "histogram": latest_histogram
         }
-
     except Exception as e:
         logging.error(f"Error calculating MACD: {str(e)}")
         return {"macd": None, "signal": None, "histogram": None}
 
+def invoke_trading_lambda(symbol: str, action: str, position_type: str = None,
+                          take_profit: float = None, stop_loss: float = None, close_price: float = None):
+    """Invoke the trading Lambda function."""
+    try:
+        payload = {"action": action, "symbol": symbol}
+
+        if action in ["open_long_sl_tp_without_investment", "open_short_sl_tp_without_investment"]:
+            payload.update({
+                "stop_loss_price": stop_loss,
+                "take_profit_price": take_profit,
+                "investment_percentage": 3.0,  # Example value
+                "leverage": 10  # Example value
+            })
+
+        response = lambda_client.invoke(
+            FunctionName='binance-trading-bot',  # Replace with your second Lambda's name
+            InvocationType='Event',  # Asynchronous invocation
+            Payload=json.dumps(payload)
+        )
+        logging.info(f"Invoked trading Lambda with payload: {payload}, response: {response}")
+        return True
+    except Exception as e:
+        logging.error(f"Failed to invoke trading Lambda: {str(e)}")
+        return False
 
 def lambda_handler(event: Dict, context: object) -> Dict:
     """Handle LuxAlgo webhook and process trading signals with MACD."""
@@ -100,7 +103,7 @@ def lambda_handler(event: Dict, context: object) -> Dict:
     try:
         logging.info(f"Received Webhook Body: {event.get('body', '')}")
         body = parse_yaml(event.get('body', ''))
-        logging.info(f"Received Webhook Body: {body}")
+        logging.info(f"Parsed Webhook Body: {body}")
 
         symbol = body.get('ticker')
         exchange = body.get('exchange')
@@ -123,21 +126,18 @@ def lambda_handler(event: Dict, context: object) -> Dict:
         take_profit = float(body.get('Take Profit', 0)) if body.get('Take Profit') != 'null' else None
         stop_loss = float(body.get('Stop Loss', 0)) if body.get('Stop Loss') != 'null' else None
 
-        premium_bottom = float(body.get('Premium Bottom', 0)) if body.get(
-            'Premium Bottom') != 'null' and 'plot' not in body.get('Premium Bottom', '') else None
+        premium_bottom = float(body.get('Premium Bottom', 0)) if body.get('Premium Bottom') != 'null' and 'plot' not in body.get('Premium Bottom', '') else None
         trend_strength = float(body.get('Trend Strength', 0)) if body.get('Trend Strength') != 'null' else 0.0
 
         trend_tracer = float(body.get('Trend_Tracer', 0)) if body.get('Trend_Tracer') != 'null' else None
         trend_catcher = float(body.get('Trend_Catcher', 0)) if body.get('Trend_Catcher') != 'null' else None
         smart_trail = float(body.get('Smart_Trail', 0)) if body.get('Smart_Trail') != 'null' else None
-        smart_trail_extremity = float(body.get('Smart_Trail_Extremity', 0)) if body.get(
-            'Smart_Trail_Extremity') != 'null' else None
+        smart_trail_extremity = float(body.get('Smart_Trail_Extremity', 0)) if body.get('Smart_Trail_Extremity') != 'null' else None
 
         rz_r3_band = float(body.get('RZ_R3_Band', 0)) if body.get('RZ_R3_Band') != 'null' else None
         rz_r2_band = float(body.get('RZ_R2_Band', 0)) if body.get('RZ_R2_Band') != 'null' else None
         rz_r1_band = float(body.get('RZ_R1_Band', 0)) if body.get('RZ_R1_Band') != 'null' else None
-        reversal_zones_avg = float(body.get('Reversal_Zones_Average', 0)) if body.get(
-            'Reversal_Zones_Average') != 'null' else None
+        reversal_zones_avg = float(body.get('Reversal_Zones_Average', 0)) if body.get('Reversal_Zones_Average') != 'null' else None
         rz_s1_band = float(body.get('RZ_S1_Band', 0)) if body.get('RZ_S1_Band') != 'null' else None
         rz_s2_band = float(body.get('RZ_S2_Band', 0)) if body.get('RZ_S2_Band') != 'null' else None
 
@@ -155,32 +155,39 @@ def lambda_handler(event: Dict, context: object) -> Dict:
         if not client:
             raise Exception("Failed to initialize Binance client")
 
-        message = ''
-        # Calculate MACD when a signal is received
+        message = 'Webhook received successfully, no trade executed'
+        macd_result = None
+
         if position_type:
-            macd_result = calculate_macd(client, symbol, interval="1m",
+            macd_result = calculate_macd(client, symbol, interval="5m",
                                          fast_length=18, slow_length=39, signal_length=15)
             logging.info(f"MACD Results: {macd_result}")
             logging.info(f"MACD Results - macd: {macd_result['macd'] * 100}")
             logging.info(f"MACD Results - signal: {macd_result['signal'] * 100}")
             logging.info(f"MACD Results - histogram: {macd_result['histogram'] * 100}")
             logging.info(f"------------------------------------------------------------------------")
+
             if position_type == "LONG" and macd_result['histogram'] > 0:
                 logging.info(f"TRIGGER LONG SETUP")
-                message = "LONG SETUP"
-            if position_type == "SHORT" and macd_result['histogram'] < 0:
+                message = "LONG SETUP - Trade Triggered"
+                invoke_trading_lambda(symbol, "open_long_sl_tp_without_investment",
+                                      position_type, take_profit, stop_loss, close_price)
+            elif position_type == "SHORT" and macd_result['histogram'] < 0:
                 logging.info(f"TRIGGER SHORT SETUP")
-                message = "SHORT SETUP"
+                message = "SHORT SETUP - Trade Triggered"
+                invoke_trading_lambda(symbol, "open_short_sl_tp_without_investment",
+                                      position_type, take_profit, stop_loss, close_price)
+            else:
+                message = f"{position_type} SETUP - MACD not confirmed"
             logging.info(f"------------------------------------------------------------------------")
+
         if bearish_exit or bullish_exit:
             logging.info(f"------------------------------------------------------------------------")
             logging.info(f"TRIGGER EXIT SETUP")
-            message = "EXIT SETUP"
+            message = "EXIT SETUP - Partial Take Profit Triggered"
+            invoke_trading_lambda(symbol, "take_profit_partially")
             logging.info(f"------------------------------------------------------------------------")
 
-        # Process the signal
-        # Optionally, you could add trading logic based on MACD
-        # For now, just returning the MACD values with the response
         return {
             "statusCode": 200,
             "body": json.dumps({
@@ -196,11 +203,6 @@ def lambda_handler(event: Dict, context: object) -> Dict:
             })
         }
 
-        return {
-            "statusCode": 200,
-            "body": json.dumps({"message": "Webhook received successfully, no trade executed"})
-        }
-
     except Exception as e:
         logging.error(f"Error: {str(e)}")
         return {
@@ -208,8 +210,6 @@ def lambda_handler(event: Dict, context: object) -> Dict:
             "body": json.dumps({"error": f"Internal server error: {str(e)}"})
         }
 
-
-# Main function to test the YAML (unchanged)
 def main():
     yaml_input = """
 ticker: DOGEUSDT
@@ -247,7 +247,6 @@ RZ_S2_Band: 0.1615164972279652
     response = lambda_handler(event, None)
     print("Response:")
     print(json.dumps(response, indent=2))
-
 
 if __name__ == "__main__":
     main()
