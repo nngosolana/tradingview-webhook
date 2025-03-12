@@ -5,7 +5,6 @@ from typing import Dict, Optional
 import pandas as pd
 import boto3
 from binance.um_futures import UMFutures
-from order_processor import create_order_with_sl_tp
 
 # Configure logging
 logging.basicConfig(
