@@ -3,12 +3,12 @@ version: 0.2
 phases:
   install:
     runtime-versions:
-      python: 3.9  # Use the same Python version as AWS Lambda
+      python: 3.9
     commands:
-      - echo "Installing dependencies..."
+      - echo "Installing dependencies in a clean environment..."
       - pip install --upgrade pip
-      - pip install pycryptodome -t package/
-      - pip install pandas python-binance -t package/
+      - mkdir package
+      - pip install pycryptodome pandas python-binance -t package/ --no-cache-dir --platform manylinux2014_x86_64 --only-binary=:all:
 
   build:
     commands:
@@ -16,18 +16,19 @@ phases:
       - cp ./lambda_package/lambda_function.py package/
       - cp ./lambda_package/binance_trade_wrapper.py package/
       - cd package
-      - rm -rf */tests */test *.dist-info/RECORD
+      - find . -name "*.pyc" -delete  # Remove compiled files
+      - find . -name "__pycache__" -type d -exec rm -r {} +
       - zip -r ../lambda_function.zip .
       - cd ..
 
   post_build:
     commands:
       - echo "Checking ZIP file size..."
-      - ls -lah lambda_function.zip  # Debug: Check size
+      - ls -lah lambda_function.zip
       - echo "Uploading to S3..."
-      - aws s3 cp lambda_function.zip s3://nnln-lambda-deployment/lambda_function.zip  # Correct S3 bucket name
+      - aws s3 cp lambda_function.zip s3://nnln-lambda-deployment/lambda_function.zip
       - echo "Updating Lambda function from S3..."
-      - aws lambda update-function-code --function-name TradingViewWebhookProcessorV1 --s3-bucket nnln-lambda-deployment --s3-key lambda_function.zip  # Corrected option
+      - aws lambda update-function-code --function-name TradingViewWebhookProcessorV1 --s3-bucket nnln-lambda-deployment --s3-key lambda_function.zip
 
 artifacts:
   files:
