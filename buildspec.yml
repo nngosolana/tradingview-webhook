@@ -8,7 +8,7 @@ phases:
       - echo "Installing dependencies in a clean environment..."
       - pip install --upgrade pip
       - mkdir package
-      - pip install pycryptodome pandas python-binance -t package/ --no-cache-dir --platform manylinux2014_x86_64
+      - pip install pycryptodome pandas python-binance -t package/ --no-cache-dir --platform manylinux2014_x86_64 --only-binary=:all: --no-binary=:none:
 
   build:
     commands:
