@@ -4,18 +4,10 @@ phases:
   install:
     runtime-versions:
       python: 3.9
-    commands:
-      - echo "Installing dependencies in a clean environment..."
-      - pip install --upgrade pip
-      - mkdir package
-      - pip install pycryptodome pandas python-binance -t package/ --no-cache-dir --platform manylinux2014_x86_64  --no-deps
-
   build:
     commands:
       - echo "Packaging Lambda function..."
-      - cp ./lambda_package/lambda_function.py package/
-      - cp ./lambda_package/binance_trade_wrapper.py package/
-      - cd package
+      - cd lambda_package
       - find . -name "*.pyc" -delete
       - find . -name "__pycache__" -type d -exec rm -r {} +
       - zip -r ../lambda_function.zip .
