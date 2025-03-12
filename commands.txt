@@ -1,0 +1,31 @@
+------------------------------------------------------------------------------------------
+Zip
+Compress-Archive -Path lambda_package\* -DestinationPath lambda_function.zip -Force
+------------------------------------------------------------------------------------------
+Create Lambda Function
+aws lambda create-function --function-name binance-trading-bot `
+  --runtime python3.9 `
+  --role arn:aws:iam::498329956343:role/LambdaExecutionRole `
+  --handler lambda_function.lambda_handler `
+  --timeout 30 `
+  --memory-size 256 `
+  --zip-file fileb://lambda_function.zip
+------------------------------------------------------------------------------------------
+Update Lambda Code
+aws lambda update-function-code --function-name binance-trading-bot --zip-file fileb://lambda_function.zip
+
+------------------------------------------------------------------------------------------
+Check creation:
+aws lambda list-functions
+------------------------------------------------------------------------------------------
+Test sample lambda
+aws lambda invoke --function-name binance-trading-bot --invocation-type RequestResponse  --cli-binary-format raw-in-base64-out --payload file://payload/test.json response.json
+
+
+------------------------------------------------------------------------------------------
+Check logs Lambda
+aws lambda invoke --function-name binance-trading-bot --log-type Tail --query 'LogResult' --output text | base64 --decode
+
+------------------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------------------

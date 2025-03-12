@@ -1,0 +1,33 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.9  # Use the same Python version as AWS Lambda
+    commands:
+      - echo "Installing dependencies..."
+      - pip install --upgrade pip
+      - pip install git+https://github.com/binance/binance-futures-connector-python.git -t package/
+      - pip install pycryptodome -t package/
+
+  build:
+    commands:
+      - echo "Packaging Lambda function..."
+      - cp ./lambda_package/lambda_function.py package/
+      - cp ./lambda_package/binance_trade_wrapper.py package/
+      - cp ./lambda_package/order_processor.py package/
+      - cp ./lambda_package/price_calculation_processor.py package/
+      - cd package
+      - zip -r ../lambda_function.zip .
+      - cd ..
+
+  post_build:
+    commands:
+      - echo "Checking if ZIP file exists..."
+      - ls -lah lambda_function.zip  # List files to debug
+      - echo "Uploading to AWS Lambda..."
+      - aws lambda update-function-code --function-name TradingViewWebhookProcessorV1 --zip-file fileb://lambda_function.zip
+
+artifacts:
+  files:
+    - lambda_function.zip
