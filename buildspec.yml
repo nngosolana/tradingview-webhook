@@ -8,7 +8,7 @@ phases:
       - echo "Installing dependencies..."
       - pip install --upgrade pip
       - pip install pycryptodome -t package/
-      - pip install pandas python-binance
+      - pip install pandas python-binance -t package/
 
   build:
     commands:
