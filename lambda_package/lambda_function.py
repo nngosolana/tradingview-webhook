@@ -1,157 +1,252 @@
 import json
 import logging
 import os
-
-import boto3
+from typing import Dict, Optional
+import pandas as pd
 from binance.um_futures import UMFutures
-from order_processor import create_order_with_sl_tp, close_position, clear_all_symbol_orders, take_profit_partially
-from price_calculation_processor import get_current_balance_in_usdt, calculate_sl_tp_prices, \
-    calculate_params_with_sl_tp_wihtout_invest_percentage
+from order_processor import create_order_with_sl_tp
 
-# Configure logging with file and function prefix
+# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(filename)s:%(funcName)s - %(levelname)s - %(message)s'
 )
 
 
-def get_binance_client():
-    logging.info("START: get_binance_client")
+def parse_yaml(yaml_string: str) -> Dict[str, str]:
+    """Parse YAML-like string into a dictionary."""
+    data = {}
     try:
-        is_lambda = os.getenv("AWS_LAMBDA_FUNCTION_NAME") is not None
-        if is_lambda:
-            secret_name = "binance_api_keys"
-            region_name = "ap-southeast-1"
-            client = boto3.client("secretsmanager", region_name=region_name)
-            response = client.get_secret_value(SecretId=secret_name)
-            secret = json.loads(response["SecretString"])
-            api_key = secret["BINANCE_API_KEY"]
-            api_secret = secret["BINANCE_API_SECRET"]
-        else:
-            api_key = os.getenv("BINANCE_API_KEY")
-            api_secret = os.getenv("BINANCE_API_SECRET")
-            if not api_key or not api_secret:
-                raise ValueError("Missing Binance API credentials")
+        for line in yaml_string.splitlines():
+            if ":" in line:
+                key, value = line.split(":", 1)
+                value = value.replace("{{", "").replace("}}", "").strip()
+                data[key.strip()] = value.strip()
+    except Exception as e:
+        logging.error(f"Error parsing YAML: {str(e)}")
+    return data
+
+
+def get_binance_client() -> Optional[UMFutures]:
+    """Get Binance client."""
+    try:
+        api_key = os.getenv("BINANCE_API_KEY")
+        api_secret = os.getenv("BINANCE_API_SECRET")
+        if not api_key or not api_secret:
+            raise ValueError("Missing Binance API credentials")
         client = UMFutures(key=api_key, secret=api_secret)
-        logging.info("END: get_binance_client - Successfully created UMFutures client")
         return client
     except Exception as e:
-        logging.error(f"Failed to retrieve Binance API keys: {str(e)}")
-        raise ValueError("Could not retrieve Binance API credentials.")
+        logging.error(f"Failed to create Binance client: {str(e)}")
+        return None
 
 
-def lambda_handler(event, context):
-    logging.info("START: lambda_handler")
-    logging.info(f"Event received: {json.dumps(event)}")
+def calculate_macd(client: UMFutures, symbol: str, interval: str = "1m",
+                   fast_length: int = 18, slow_length: int = 39, signal_length: int = 15) -> Dict:
+    """Calculate MACD with given parameters using Binance 1m klines."""
     try:
-        body = json.loads(event["body"]) if "body" in event else event
-        client = get_binance_client()
-        symbol = body.get("symbol")
-        action = body.get("action")
+        # Fetch klines (candlestick data) from Binance
+        # We need enough data points for the slow EMA (39 periods + some buffer)
+        klines = client.klines(symbol=symbol, interval=interval, limit=100)
 
-        if not symbol or not action:
-            raise ValueError("Missing symbol or action")
+        # Convert klines to DataFrame
+        # Binance klines format: [timestamp, open, high, low, close, volume, ...]
+        df = pd.DataFrame(klines, columns=[
+            'timestamp', 'open', 'high', 'low', 'close', 'volume',
+            'close_time', 'quote_asset_volume', 'trades', 'taker_buy_base',
+            'taker_buy_quote', 'ignored'
+        ])
 
-        if action == "get_balance":
-            result = get_current_balance_in_usdt(client)
-        elif action in ["open_long_sl_tp", "open_short_sl_tp"]:
-            investment_percentage = float(body["investment_percentage"])
-            max_loss_percentage = float(body["max_loss_percentage"])
-            leverage = float(body["leverage"])
-            risk_reward_ratio = body["risk_reward_ratio"]
-            position_type = "LONG" if action == "open_long_sl_tp" else "SHORT"
+        # log latest close price
+        logging.info(f"Latest Close Price: {df['close'].iloc[-1]}")
 
-            # Step 1: Calculate SL, TP, and investment
-            calc_result = calculate_sl_tp_prices(client, symbol, position_type,
-                                                 investment_percentage, max_loss_percentage,
-                                                 risk_reward_ratio, leverage)
-            if "status" in calc_result and calc_result["status"] == "error":
-                logging.error(f"Calculation failed: {calc_result['message']}")
-                return calc_result
+        # Convert close prices to float
+        df['close'] = df['close'].astype(float)
 
-            # Step 2: Create order with calculated values
-            result = create_order_with_sl_tp(
-                client, symbol, position_type,
-                stop_loss_price=calc_result["stop_loss_price"],
-                take_profit_price=calc_result["take_profit_price"],
-                quantity=calc_result["quantity"],
-                investment_amount=calc_result["investment_amount"],
-                market_price=calc_result["market_price"]
-            )
-        elif action in ["open_long_sl_tp_without_investment", "open_short_sl_tp_without_investment"]:
-            stop_loss_price = float(body["stop_loss_price"])
-            take_profit_price = float(body["take_profit_price"])
-            investment_percentage = float(body["investment_percentage"])
-            leverage = float(body["leverage"])
-            position_type = "LONG" if action == "open_long_sl_tp" else "SHORT"
+        # Calculate EMAs
+        ema_fast = df['close'].ewm(span=fast_length, adjust=False).mean()
+        ema_slow = df['close'].ewm(span=slow_length, adjust=False).mean()
 
-            # Step 1: Calculate SL, TP, and investment
-            calc_result = calculate_params_with_sl_tp_wihtout_invest_percentage(client, symbol, position_type,
-                                                                                stop_loss_price, take_profit_price,
-                                                                                investment_percentage, leverage)
-            if "status" in calc_result and calc_result["status"] == "error":
-                logging.error(f"Calculation failed: {calc_result['message']}")
-                return calc_result
+        # MACD Line = Fast EMA - Slow EMA
+        macd_line = ema_fast - ema_slow
 
-            # Step 2: Create order with calculated values
-            result = create_order_with_sl_tp(
-                client, symbol, position_type,
-                stop_loss_price=calc_result["stop_loss_price"],
-                take_profit_price=calc_result["take_profit_price"],
-                quantity=calc_result["quantity"],
-                investment_amount=calc_result["investment_amount"],
-                market_price=calc_result["market_price"]
-            )
-        elif action == "close_all_symbol_orders":
-            result = close_position(client, symbol, "LONG")
-            logging.info(f"Close Long: {result}")
-            result = close_position(client, symbol, "SHORT")
-            logging.info(f"Close Short: {result}")
-        elif action == "take_profit_partially":
-            symbol = body.get("symbol")
-            result = take_profit_partially(client, symbol)
-        elif action == "clear_orders":
-            result = clear_all_symbol_orders(client, symbol)
-        else:
-            result = {"status": "error", "message": "Invalid action"}
+        # Signal Line = EMA of MACD Line
+        signal_line = macd_line.ewm(span=signal_length, adjust=False).mean()
 
-        logging.info(f"Lambda result: {result}")
-        return result
+        # Histogram = MACD Line - Signal Line
+        histogram = macd_line - signal_line
+
+        # Get the latest values
+        latest_macd = macd_line.iloc[-1]
+        latest_signal = signal_line.iloc[-1]
+        latest_histogram = histogram.iloc[-1]
+
+        logging.info(f"MACD Calculated - MACD: {latest_macd}, Signal: {latest_signal}, Histogram: {latest_histogram}")
+
+        return {
+            "macd": latest_macd,
+            "signal": latest_signal,
+            "histogram": latest_histogram
+        }
+
     except Exception as e:
-        logging.error(f"Unhandled Exception: {str(e)}")
-        return {"status": "error", "message": str(e)}
+        logging.error(f"Error calculating MACD: {str(e)}")
+        return {"macd": None, "signal": None, "histogram": None}
 
 
-def test_lambda(action, symbol=None, take_profit_price=None,
-                stop_loss_price=None, investment_percentage=None,
-                position_type=None, max_loss_percentage=None,
-                risk_reward_ratio=None, leverage=10):
-    logging.info("START: test_lambda")
-    event = {
-        "body": json.dumps({
-            "action": action,
-            "symbol": symbol,
-            "take_profit_price": take_profit_price,
-            "stop_loss_price": stop_loss_price,
-            "investment_percentage": investment_percentage,
-            "position_type": position_type,
-            "max_loss_percentage": max_loss_percentage,
-            "risk_reward_ratio": risk_reward_ratio,
-            "leverage": leverage
-        })
-    }
-    logging.info(f"Test event: {event}")
-    context = {}
-    response = lambda_handler(event, context)
-    logging.info(f"Test response: {json.dumps(response, indent=4)}")
-    print(json.dumps(response, indent=4))
+def lambda_handler(event: Dict, context: object) -> Dict:
+    """Handle LuxAlgo webhook and process trading signals with MACD."""
+    logging.info("START: lambda_handler")
+    try:
+        body = parse_yaml(event.get('body', ''))
+        logging.info(f"Received Webhook Body: {body}")
+
+        symbol = body.get('ticker')
+        exchange = body.get('exchange')
+        interval = body.get('interval')
+        timenow = body.get('timenow')
+        time = body.get('time')
+        open_price = float(body.get('open', 0)) if body.get('open') != 'null' else 0.0
+        close_price = float(body.get('close', 0)) if body.get('close') != 'null' else 0.0
+        high_price = float(body.get('high', 0)) if body.get('high') != 'null' else 0.0
+        low_price = float(body.get('low', 0)) if body.get('low') != 'null' else 0.0
+        volume = float(body.get('volume', 0)) if body.get('volume') != 'null' else 0.0
+
+        bullish = int(body.get('Bullish', 0)) if body.get('Bullish') != 'null' else 0
+        bullish_plus = int(body.get('Bullish+', 0)) if body.get('Bullish+') != 'null' else 0
+        bearish = int(body.get('Bearish', 0)) if body.get('Bearish') != 'null' else 0
+        bearish_plus = int(body.get('Bearish+', 0)) if body.get('Bearish+') != 'null' else 0
+        bullish_exit = body.get('BullishExit') != 'null' and body.get('BullishExit') != '0'
+        bearish_exit = body.get('BearishExit') != 'null' and body.get('BearishExit') != '0'
+
+        take_profit = float(body.get('Take Profit', 0)) if body.get('Take Profit') != 'null' else None
+        stop_loss = float(body.get('Stop Loss', 0)) if body.get('Stop Loss') != 'null' else None
+
+        premium_bottom = float(body.get('Premium Bottom', 0)) if body.get(
+            'Premium Bottom') != 'null' and 'plot' not in body.get('Premium Bottom', '') else None
+        trend_strength = float(body.get('Trend Strength', 0)) if body.get('Trend Strength') != 'null' else 0.0
+
+        trend_tracer = float(body.get('Trend_Tracer', 0)) if body.get('Trend_Tracer') != 'null' else None
+        trend_catcher = float(body.get('Trend_Catcher', 0)) if body.get('Trend_Catcher') != 'null' else None
+        smart_trail = float(body.get('Smart_Trail', 0)) if body.get('Smart_Trail') != 'null' else None
+        smart_trail_extremity = float(body.get('Smart_Trail_Extremity', 0)) if body.get(
+            'Smart_Trail_Extremity') != 'null' else None
+
+        rz_r3_band = float(body.get('RZ_R3_Band', 0)) if body.get('RZ_R3_Band') != 'null' else None
+        rz_r2_band = float(body.get('RZ_R2_Band', 0)) if body.get('RZ_R2_Band') != 'null' else None
+        rz_r1_band = float(body.get('RZ_R1_Band', 0)) if body.get('RZ_R1_Band') != 'null' else None
+        reversal_zones_avg = float(body.get('Reversal_Zones_Average', 0)) if body.get(
+            'Reversal_Zones_Average') != 'null' else None
+        rz_s1_band = float(body.get('RZ_S1_Band', 0)) if body.get('RZ_S1_Band') != 'null' else None
+        rz_s2_band = float(body.get('RZ_S2_Band', 0)) if body.get('RZ_S2_Band') != 'null' else None
+
+        position_type = None
+        if bullish or bullish_plus:
+            position_type = "LONG"
+        elif bearish or bearish_plus:
+            position_type = "SHORT"
+
+        logging.info(f"Received Signal - Symbol: {symbol}, Position: {position_type}, "
+                     f"Price: {close_price}, TP: {take_profit}, SL: {stop_loss}, "
+                     f"Trend Strength: {trend_strength}")
+
+        client = get_binance_client()
+        if not client:
+            raise Exception("Failed to initialize Binance client")
+
+        message = ''
+        # Calculate MACD when a signal is received
+        if position_type:
+            macd_result = calculate_macd(client, symbol, interval="1m",
+                                         fast_length=18, slow_length=39, signal_length=15)
+            logging.info(f"MACD Results: {macd_result}")
+            logging.info(f"MACD Results - macd: {macd_result['macd'] * 100}")
+            logging.info(f"MACD Results - signal: {macd_result['signal'] * 100}")
+            logging.info(f"MACD Results - histogram: {macd_result['histogram'] * 100}")
+            logging.info(f"------------------------------------------------------------------------")
+            if position_type == "LONG" and macd_result['histogram'] > 0:
+                logging.info(f"TRIGGER LONG SETUP")
+                message = "LONG SETUP"
+            if position_type == "SHORT" and macd_result['histogram'] < 0:
+                logging.info(f"TRIGGER SHORT SETUP")
+                message = "SHORT SETUP"
+            logging.info(f"------------------------------------------------------------------------")
+        if bearish_exit or bullish_exit:
+            logging.info(f"------------------------------------------------------------------------")
+            logging.info(f"TRIGGER EXIT SETUP")
+            message = "EXIT SETUP"
+            logging.info(f"------------------------------------------------------------------------")
+
+        # Process the signal
+        # Optionally, you could add trading logic based on MACD
+        # For now, just returning the MACD values with the response
+        return {
+            "statusCode": 200,
+            "body": json.dumps({
+                "message": message,
+                "macd": macd_result,
+                "signal": {
+                    "symbol": symbol,
+                    "position_type": position_type,
+                    "close_price": close_price,
+                    "take_profit": take_profit,
+                    "stop_loss": stop_loss
+                }
+            })
+        }
+
+        return {
+            "statusCode": 200,
+            "body": json.dumps({"message": "Webhook received successfully, no trade executed"})
+        }
+
+    except Exception as e:
+        logging.error(f"Error: {str(e)}")
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": f"Internal server error: {str(e)}"})
+        }
+
+
+# Main function to test the YAML (unchanged)
+def main():
+    yaml_input = """
+ticker: DOGEUSDT
+exchange: BINANCE
+interval: 1
+timenow: 2025-03-12T03:18:01Z
+time: 2025-03-12T03:17:00Z
+open: 0.16317
+close: 0.16299
+high: 0.16319
+volume: 196461
+low: 0.16299
+Bullish: 0
+Bullish+: 0
+Bearish: 0
+Bearish+: 1
+BullishExit: null
+BearishExit: null
+Take Profit: 0.1620825100139974
+Stop Loss: 0.1638974899860026
+Premium Bottom: {{plot(Premium Bottom)}}
+Trend Strength: 73.20487545072551
+Trend_Tracer: 0.163700210962177
+Trend_Catcher: 0.16346498717
+Smart_Trail: 0.1644178133377382
+Smart_Trail_Extremity: 0.1640608600033037
+RZ_R3_Band: 0.1669824463710614
+RZ_R2_Band: 0.166080965595846
+RZ_R1_Band: 0.1651794848206306
+Reversal_Zones_Average: 0.1637987314119056
+RZ_S1_Band: 0.1624179780031806
+RZ_S2_Band: 0.1615164972279652
+"""
+    event = {"body": yaml_input}
+    response = lambda_handler(event, None)
+    print("Response:")
+    print(json.dumps(response, indent=2))
 
 
 if __name__ == "__main__":
-    logging.info("Starting test execution")
-    # test_lambda("open_short_sl_tp_without_investment", "DOGEUSDT", stop_loss_price=0.16941, take_profit_price=0.16207,
-    #               investment_percentage=3.0, leverage=10)
-    test_lambda("close_all_symbol_orders", "DOGEUSDT")
-    # test_lambda("clear_orders", "DOGEUSDT")
-    # test_lambda("take_profit_partially", "DOGEUSDT")
-    logging.info("Test execution completed")
+    main()
