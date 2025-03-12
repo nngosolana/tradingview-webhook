@@ -6,9 +6,14 @@ import pandas as pd
 import boto3
 from binance.um_futures import UMFutures
 
+root = logging.getLogger()
+if root.handlers:
+    for handler in root.handlers:
+        root.removeHandler(handler)
+
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format='%(filename)s:%(funcName)s - %(levelname)s - %(message)s'
 )
 

@@ -3,12 +3,16 @@ from binance.um_futures import UMFutures
 from decimal import Decimal
 from typing import Union, Optional, Dict, List
 
-# Configure logging with file and function prefix
+root = logging.getLogger()
+if root.handlers:
+    for handler in root.handlers:
+        root.removeHandler(handler)
+
+# Configure logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format='%(filename)s:%(funcName)s - %(levelname)s - %(message)s'
 )
-
 
 def round_step_size(quantity: Union[float, Decimal], step_size: Union[float, Decimal]) -> float:
     logging.info(f"START: round_step_size - quantity: {quantity}, step_size: {step_size}")
