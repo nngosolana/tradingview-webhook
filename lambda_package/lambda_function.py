@@ -178,7 +178,9 @@ def lambda_handler(event: Dict, context: object) -> Dict:
                 invoke_trading_lambda(symbol, "open_short_sl_tp_without_investment",
                                       position_type, take_profit, stop_loss, close_price)
             else:
-                message = f"{position_type} SETUP - MACD not confirmed"
+                logging.info(f"NON-CONFIRM SIGNAL SETUP")
+                message = "NON-CONFIRM SIGNAL SETUP - Take Profit Partially"
+                invoke_trading_lambda(symbol, "take_profit_partially")
             logging.info(f"------------------------------------------------------------------------")
 
         if bearish_exit or bullish_exit:
