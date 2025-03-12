@@ -15,19 +15,6 @@ logging.basicConfig(
 # Initialize AWS Lambda client
 lambda_client = boto3.client('lambda')
 
-def parse_yaml(yaml_string: str) -> Dict[str, str]:
-    """Parse YAML-like string into a dictionary."""
-    data = {}
-    try:
-        for line in yaml_string.splitlines():
-            if ":" in line:
-                key, value = line.split(":", 1)
-                value = value.replace("{{", "").replace("}}", "").strip()
-                data[key.strip()] = value.strip()
-    except Exception as e:
-        logging.error(f"Error parsing YAML: {str(e)}")
-    return data
-
 def get_binance_client() -> Optional[UMFutures]:
     """Get Binance client."""
     try:
@@ -100,8 +87,15 @@ def lambda_handler(event: Dict, context: object) -> Dict:
     """Handle LuxAlgo webhook and process trading signals with MACD."""
     logging.info("START: lambda_handler")
     try:
-        logging.info(f"Received Webhook Body: {event.get('body', '')}")
-        body = parse_yaml(event.get('body', ''))
+        # Handle JSON input
+        body_str = event.get('body', '')
+        logging.info(f"Received Webhook Body: {body_str}")
+
+        # Parse JSON body (assuming body is a string, common in Lambda events)
+        if isinstance(body_str, str):
+            body = json.loads(body_str)
+        else:
+            body = body_str  # If already a dict
         logging.info(f"Parsed Webhook Body: {body}")
 
         symbol = body.get('ticker')
@@ -109,36 +103,36 @@ def lambda_handler(event: Dict, context: object) -> Dict:
         interval = body.get('interval')
         timenow = body.get('timenow')
         time = body.get('time')
-        open_price = float(body.get('open', 0)) if body.get('open') != 'null' else 0.0
-        close_price = float(body.get('close', 0)) if body.get('close') != 'null' else 0.0
-        high_price = float(body.get('high', 0)) if body.get('high') != 'null' else 0.0
-        low_price = float(body.get('low', 0)) if body.get('low') != 'null' else 0.0
-        volume = float(body.get('volume', 0)) if body.get('volume') != 'null' else 0.0
+        open_price = float(body.get('open', 0)) if body.get('open') is not None else 0.0
+        close_price = float(body.get('close', 0)) if body.get('close') is not None else 0.0
+        high_price = float(body.get('high', 0)) if body.get('high') is not None else 0.0
+        low_price = float(body.get('low', 0)) if body.get('low') is not None else 0.0
+        volume = float(body.get('volume', 0)) if body.get('volume') is not None else 0.0
 
-        bullish = int(body.get('Bullish', 0)) if body.get('Bullish') != 'null' else 0
-        bullish_plus = int(body.get('Bullish+', 0)) if body.get('Bullish+') != 'null' else 0
-        bearish = int(body.get('Bearish', 0)) if body.get('Bearish') != 'null' else 0
-        bearish_plus = int(body.get('Bearish+', 0)) if body.get('Bearish+') != 'null' else 0
-        bullish_exit = body.get('BullishExit') != 'null' and body.get('BullishExit') != '0'
-        bearish_exit = body.get('BearishExit') != 'null' and body.get('BearishExit') != '0'
+        bullish = int(body.get('Bullish', 0)) if body.get('Bullish') is not None else 0
+        bullish_plus = int(body.get('Bullish+', 0)) if body.get('Bullish+') is not None else 0
+        bearish = int(body.get('Bearish', 0)) if body.get('Bearish') is not None else 0
+        bearish_plus = int(body.get('Bearish+', 0)) if body.get('Bearish+') is not None else 0
+        bullish_exit = body.get('BullishExit') is not None and body.get('BullishExit') != 0
+        bearish_exit = body.get('BearishExit') is not None and body.get('BearishExit') != 0
 
-        take_profit = float(body.get('Take Profit', 0)) if body.get('Take Profit') != 'null' else None
-        stop_loss = float(body.get('Stop Loss', 0)) if body.get('Stop Loss') != 'null' else None
+        take_profit = float(body.get('Take Profit', 0)) if body.get('Take Profit') is not None else None
+        stop_loss = float(body.get('Stop Loss', 0)) if body.get('Stop Loss') is not None else None
 
-        premium_bottom = float(body.get('Premium Bottom', 0)) if body.get('Premium Bottom') != 'null' and 'plot' not in body.get('Premium Bottom', '') else None
-        trend_strength = float(body.get('Trend Strength', 0)) if body.get('Trend Strength') != 'null' else 0.0
+        premium_bottom = float(body.get('Premium Bottom', 0)) if body.get('Premium Bottom') is not None and 'plot' not in str(body.get('Premium Bottom', '')) else None
+        trend_strength = float(body.get('Trend Strength', 0)) if body.get('Trend Strength') is not None else 0.0
 
-        trend_tracer = float(body.get('Trend_Tracer', 0)) if body.get('Trend_Tracer') != 'null' else None
-        trend_catcher = float(body.get('Trend_Catcher', 0)) if body.get('Trend_Catcher') != 'null' else None
-        smart_trail = float(body.get('Smart_Trail', 0)) if body.get('Smart_Trail') != 'null' else None
-        smart_trail_extremity = float(body.get('Smart_Trail_Extremity', 0)) if body.get('Smart_Trail_Extremity') != 'null' else None
+        trend_tracer = float(body.get('Trend_Tracer', 0)) if body.get('Trend_Tracer') is not None else None
+        trend_catcher = float(body.get('Trend_Catcher', 0)) if body.get('Trend_Catcher') is not None else None
+        smart_trail = float(body.get('Smart_Trail', 0)) if body.get('Smart_Trail') is not None else None
+        smart_trail_extremity = float(body.get('Smart_Trail_Extremity', 0)) if body.get('Smart_Trail_Extremity') is not None else None
 
-        rz_r3_band = float(body.get('RZ_R3_Band', 0)) if body.get('RZ_R3_Band') != 'null' else None
-        rz_r2_band = float(body.get('RZ_R2_Band', 0)) if body.get('RZ_R2_Band') != 'null' else None
-        rz_r1_band = float(body.get('RZ_R1_Band', 0)) if body.get('RZ_R1_Band') != 'null' else None
-        reversal_zones_avg = float(body.get('Reversal_Zones_Average', 0)) if body.get('Reversal_Zones_Average') != 'null' else None
-        rz_s1_band = float(body.get('RZ_S1_Band', 0)) if body.get('RZ_S1_Band') != 'null' else None
-        rz_s2_band = float(body.get('RZ_S2_Band', 0)) if body.get('RZ_S2_Band') != 'null' else None
+        rz_r3_band = float(body.get('RZ_R3_Band', 0)) if body.get('RZ_R3_Band') is not None else None
+        rz_r2_band = float(body.get('RZ_R2_Band', 0)) if body.get('RZ_R2_Band') is not None else None
+        rz_r1_band = float(body.get('RZ_R1_Band', 0)) if body.get('RZ_R1_Band') is not None else None
+        reversal_zones_avg = float(body.get('Reversal_Zones_Average', 0)) if body.get('Reversal_Zones_Average') is not None else None
+        rz_s1_band = float(body.get('RZ_S1_Band', 0)) if body.get('RZ_S1_Band') is not None else None
+        rz_s2_band = float(body.get('RZ_S2_Band', 0)) if body.get('RZ_S2_Band') is not None else None
 
         position_type = None
         if bullish or bullish_plus:
@@ -212,39 +206,42 @@ def lambda_handler(event: Dict, context: object) -> Dict:
         }
 
 def main():
-    yaml_input = """
-ticker: DOGEUSDT
-exchange: BINANCE
-interval: 1
-timenow: 2025-03-12T03:18:01Z
-time: 2025-03-12T03:17:00Z
-open: 0.16317
-close: 0.16299
-high: 0.16319
-volume: 196461
-low: 0.16299
-Bullish: 0
-Bullish+: 0
-Bearish: 0
-Bearish+: 1
-BullishExit: null
-BearishExit: null
-Take Profit: 0.1620825100139974
-Stop Loss: 0.1638974899860026
-Premium Bottom: {{plot(Premium Bottom)}}
-Trend Strength: 73.20487545072551
-Trend_Tracer: 0.163700210962177
-Trend_Catcher: 0.16346498717
-Smart_Trail: 0.1644178133377382
-Smart_Trail_Extremity: 0.1640608600033037
-RZ_R3_Band: 0.1669824463710614
-RZ_R2_Band: 0.166080965595846
-RZ_R1_Band: 0.1651794848206306
-Reversal_Zones_Average: 0.1637987314119056
-RZ_S1_Band: 0.1624179780031806
-RZ_S2_Band: 0.1615164972279652
-"""
-    event = {"body": yaml_input}
+    # JSON equivalent of the previous YAML input
+    json_input = {
+        "ticker": "DOGEUSDT",
+        "exchange": "BINANCE",
+        "interval": "1",
+        "timenow": "2025-03-12T03:18:01Z",
+        "time": "2025-03-12T03:17:00Z",
+        "open": "0.16317",
+        "close": "0.16299",
+        "high": "0.16319",
+        "volume": "196461",
+        "low": "0.16299",
+        "Bullish": "0",
+        "Bullish+": "0",
+        "Bearish": "0",
+        "Bearish+": "1",
+        "BullishExit": None,
+        "BearishExit": None,
+        "Take Profit": "0.1620825100139974",
+        "Stop Loss": "0.1638974899860026",
+        "Premium Bottom": "{{plot(Premium Bottom)}}",
+        "Trend Strength": "73.20487545072551",
+        "Trend_Tracer": "0.163700210962177",
+        "Trend_Catcher": "0.16346498717",
+        "Smart_Trail": "0.1644178133377382",
+        "Smart_Trail_Extremity": "0.1640608600033037",
+        "RZ_R3_Band": "0.1669824463710614",
+        "RZ_R2_Band": "0.166080965595846",
+        "RZ_R1_Band": "0.1651794848206306",
+        "Reversal_Zones_Average": "0.1637987314119056",
+        "RZ_S1_Band": "0.1624179780031806",
+        "RZ_S2_Band": "0.1615164972279652"
+    }
+
+    # Simulate Lambda event with JSON body as a string
+    event = {"body": json.dumps(json_input)}
     response = lambda_handler(event, None)
     print("Response:")
     print(json.dumps(response, indent=2))
