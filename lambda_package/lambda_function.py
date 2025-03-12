@@ -20,6 +20,7 @@ logging.basicConfig(
 # Initialize AWS Lambda client
 lambda_client = boto3.client('lambda')
 
+
 def get_binance_client():
     logging.info("START: get_binance_client")
     try:
@@ -44,6 +45,7 @@ def get_binance_client():
         logging.error(f"Failed to retrieve Binance API keys: {str(e)}")
         raise ValueError("Could not retrieve Binance API credentials.")
 
+
 def calculate_macd(client: UMFutures, symbol: str, interval: str = "5m",
                    fast_length: int = 18, slow_length: int = 39, signal_length: int = 15) -> Dict:
     """Calculate MACD with given parameters using Binance 5m klines."""
@@ -64,15 +66,18 @@ def calculate_macd(client: UMFutures, symbol: str, interval: str = "5m",
         latest_macd = macd_line.iloc[-1]
         latest_signal = signal_line.iloc[-1]
         latest_histogram = histogram.iloc[-1]
+        prev_histogram = histogram.iloc[-2]  # Previous histogram
         logging.info(f"MACD Calculated - MACD: {latest_macd}, Signal: {latest_signal}, Histogram: {latest_histogram}")
         return {
             "macd": latest_macd,
             "signal": latest_signal,
-            "histogram": latest_histogram
+            "histogram": latest_histogram,
+            "prev_histogram": prev_histogram
         }
     except Exception as e:
         logging.error(f"Error calculating MACD: {str(e)}")
         return {"macd": None, "signal": None, "histogram": None}
+
 
 def invoke_trading_lambda(symbol: str, action: str, position_type: str = None,
                           take_profit: float = None, stop_loss: float = None, close_price: float = None):
@@ -98,6 +103,7 @@ def invoke_trading_lambda(symbol: str, action: str, position_type: str = None,
     except Exception as e:
         logging.error(f"Failed to invoke trading Lambda: {str(e)}")
         return False
+
 
 def lambda_handler(event: Dict, context: object) -> Dict:
     """Handle LuxAlgo webhook and process trading signals with MACD."""
@@ -136,18 +142,21 @@ def lambda_handler(event: Dict, context: object) -> Dict:
         take_profit = float(body.get('Take Profit', 0)) if body.get('Take Profit') is not None else None
         stop_loss = float(body.get('Stop Loss', 0)) if body.get('Stop Loss') is not None else None
 
-        premium_bottom = float(body.get('Premium Bottom', 0)) if body.get('Premium Bottom') is not None and 'plot' not in str(body.get('Premium Bottom', '')) else None
+        premium_bottom = float(body.get('Premium Bottom', 0)) if body.get(
+            'Premium Bottom') is not None and 'plot' not in str(body.get('Premium Bottom', '')) else None
         trend_strength = float(body.get('Trend Strength', 0)) if body.get('Trend Strength') is not None else 0.0
 
         trend_tracer = float(body.get('Trend_Tracer', 0)) if body.get('Trend_Tracer') is not None else None
         trend_catcher = float(body.get('Trend_Catcher', 0)) if body.get('Trend_Catcher') is not None else None
         smart_trail = float(body.get('Smart_Trail', 0)) if body.get('Smart_Trail') is not None else None
-        smart_trail_extremity = float(body.get('Smart_Trail_Extremity', 0)) if body.get('Smart_Trail_Extremity') is not None else None
+        smart_trail_extremity = float(body.get('Smart_Trail_Extremity', 0)) if body.get(
+            'Smart_Trail_Extremity') is not None else None
 
         rz_r3_band = float(body.get('RZ_R3_Band', 0)) if body.get('RZ_R3_Band') is not None else None
         rz_r2_band = float(body.get('RZ_R2_Band', 0)) if body.get('RZ_R2_Band') is not None else None
         rz_r1_band = float(body.get('RZ_R1_Band', 0)) if body.get('RZ_R1_Band') is not None else None
-        reversal_zones_avg = float(body.get('Reversal_Zones_Average', 0)) if body.get('Reversal_Zones_Average') is not None else None
+        reversal_zones_avg = float(body.get('Reversal_Zones_Average', 0)) if body.get(
+            'Reversal_Zones_Average') is not None else None
         rz_s1_band = float(body.get('RZ_S1_Band', 0)) if body.get('RZ_S1_Band') is not None else None
         rz_s2_band = float(body.get('RZ_S2_Band', 0)) if body.get('RZ_S2_Band') is not None else None
 
@@ -176,13 +185,17 @@ def lambda_handler(event: Dict, context: object) -> Dict:
             logging.info(f"MACD Results - signal: {macd_result['signal'] * 100}")
             logging.info(f"MACD Results - histogram: {macd_result['histogram'] * 100}")
             logging.info(f"------------------------------------------------------------------------")
+            latest_histogram = macd_result['histogram']
+            prev_histogram = macd_result['histogram_prev']
+            histogram_ratio = abs(latest_histogram) / abs(prev_histogram) if prev_histogram != 0 else abs(
+                latest_histogram) + 1 / abs(prev_histogram) + 1
 
-            if position_type == "LONG" and macd_result['histogram'] > 0:
+            if position_type == "LONG" and prev_histogram != 0 and histogram_ratio <= 0.66:
                 logging.info(f"TRIGGER LONG SETUP")
                 message = "LONG SETUP - Trade Triggered"
                 invoke_trading_lambda(symbol, "open_long_sl_tp_without_investment",
                                       position_type, take_profit, stop_loss, close_price)
-            elif position_type == "SHORT" and macd_result['histogram'] < 0:
+            elif position_type == "SHORT" and histogram_ratio <= 0.66:
                 logging.info(f"TRIGGER SHORT SETUP")
                 message = "SHORT SETUP - Trade Triggered"
                 invoke_trading_lambda(symbol, "open_short_sl_tp_without_investment",
@@ -221,6 +234,7 @@ def lambda_handler(event: Dict, context: object) -> Dict:
             "statusCode": 500,
             "body": json.dumps({"error": f"Internal server error: {str(e)}"})
         }
+
 
 def main():
     # JSON equivalent of the previous YAML input
@@ -262,6 +276,7 @@ def main():
     response = lambda_handler(event, None)
     print("Response:")
     print(json.dumps(response, indent=2))
+
 
 if __name__ == "__main__":
     main()
