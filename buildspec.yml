@@ -9,7 +9,7 @@ phases:
       - pip install --upgrade pip
       - mkdir deploy
       - cd package
-      - unzip "*.whl" -d ../deploy/
+      - unzip -o "*.whl" -d ../deploy/ || true  # Overwrite and ignore warnings
   build:
     commands:
       - echo "Packaging Lambda function..."
