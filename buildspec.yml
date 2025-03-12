@@ -16,6 +16,7 @@ phases:
       - cp ./lambda_package/lambda_function.py package/
       - cp ./lambda_package/binance_trade_wrapper.py package/
       - cd package
+      - rm -rf */tests */test *.dist-info/RECORD
       - zip -r ../lambda_function.zip .
       - cd ..
 
