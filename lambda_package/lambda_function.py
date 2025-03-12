@@ -15,18 +15,29 @@ logging.basicConfig(
 # Initialize AWS Lambda client
 lambda_client = boto3.client('lambda')
 
-def get_binance_client() -> Optional[UMFutures]:
-    """Get Binance client."""
+def get_binance_client():
+    logging.info("START: get_binance_client")
     try:
-        api_key = os.getenv("BINANCE_API_KEY")
-        api_secret = os.getenv("BINANCE_API_SECRET")
-        if not api_key or not api_secret:
-            raise ValueError("Missing Binance API credentials")
+        is_lambda = os.getenv("AWS_LAMBDA_FUNCTION_NAME") is not None
+        if is_lambda:
+            secret_name = "binance_api_keys"
+            region_name = "ap-southeast-1"
+            client = boto3.client("secretsmanager", region_name=region_name)
+            response = client.get_secret_value(SecretId=secret_name)
+            secret = json.loads(response["SecretString"])
+            api_key = secret["BINANCE_API_KEY"]
+            api_secret = secret["BINANCE_API_SECRET"]
+        else:
+            api_key = os.getenv("BINANCE_API_KEY")
+            api_secret = os.getenv("BINANCE_API_SECRET")
+            if not api_key or not api_secret:
+                raise ValueError("Missing Binance API credentials")
         client = UMFutures(key=api_key, secret=api_secret)
+        logging.info("END: get_binance_client - Successfully created UMFutures client")
         return client
     except Exception as e:
-        logging.error(f"Failed to create Binance client: {str(e)}")
-        return None
+        logging.error(f"Failed to retrieve Binance API keys: {str(e)}")
+        raise ValueError("Could not retrieve Binance API credentials.")
 
 def calculate_macd(client: UMFutures, symbol: str, interval: str = "5m",
                    fast_length: int = 18, slow_length: int = 39, signal_length: int = 15) -> Dict:
@@ -87,15 +98,16 @@ def lambda_handler(event: Dict, context: object) -> Dict:
     """Handle LuxAlgo webhook and process trading signals with MACD."""
     logging.info("START: lambda_handler")
     try:
-        # Handle JSON input
-        body_str = event.get('body', '')
-        logging.info(f"Received Webhook Body: {body_str}")
-
-        # Parse JSON body (assuming body is a string, common in Lambda events)
-        if isinstance(body_str, str):
-            body = json.loads(body_str)
+        # Handle both webhook (body as string) and direct events (body as dict)
+        if 'body' in event:
+            body_str = event.get('body', '')
+            if isinstance(body_str, str) and body_str:
+                body = json.loads(body_str)
+            else:
+                body = body_str  # If body is already a dict or empty
         else:
-            body = body_str  # If already a dict
+            body = event  # Direct event, no 'body' key
+
         logging.info(f"Parsed Webhook Body: {body}")
 
         symbol = body.get('ticker')
