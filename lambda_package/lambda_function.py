@@ -98,6 +98,7 @@ def lambda_handler(event: Dict, context: object) -> Dict:
     """Handle LuxAlgo webhook and process trading signals with MACD."""
     logging.info("START: lambda_handler")
     try:
+        logging.info(f"Received Webhook Body: {event.get('body', '')}")
         body = parse_yaml(event.get('body', ''))
         logging.info(f"Received Webhook Body: {body}")
 
