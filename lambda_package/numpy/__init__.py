@@ -85,6 +85,19 @@ available as array methods, i.e. ``x = np.array([1,2,3]); x.sort()``.
 Exceptions to this rule are documented.
 
 """
+
+
+# start delvewheel patch
+def _delvewheel_patch_1_10_0():
+    import os
+    if os.path.isdir(libs_dir := os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, 'numpy.libs'))):
+        os.add_dll_directory(libs_dir)
+
+
+_delvewheel_patch_1_10_0()
+del _delvewheel_patch_1_10_0
+# end delvewheel patch
+
 import os
 import sys
 import warnings

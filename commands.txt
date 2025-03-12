@@ -27,5 +27,8 @@ Check logs Lambda
 aws lambda invoke --function-name binance-trading-bot --log-type Tail --query 'LogResult' --output text | base64 --decode
 
 ------------------------------------------------------------------------------------------
+install requirements ( two steps )
+pip install -r requirements.txt --upgrade -t ./lambda_package
+pip download -r requirements.txt --platform manylinux2014_x86_64 --only-binary=:all: -d package/
 
 ------------------------------------------------------------------------------------------

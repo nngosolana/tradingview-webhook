@@ -221,7 +221,7 @@ def main():
         "Bullish": "0",
         "Bullish+": "0",
         "Bearish": "0",
-        "Bearish+": "1",
+        "Bearish+": "0",
         "BullishExit": None,
         "BearishExit": None,
         "Take Profit": "0.1620825100139974",
