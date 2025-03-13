@@ -1,6 +1,9 @@
 import logging
+import os
+import boto3
+import json
 from decimal import Decimal
-from typing import Union, Optional
+from typing import Union, Optional, List
 
 from binance.um_futures import UMFutures
 
@@ -14,6 +17,33 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(filename)s:%(funcName)s - %(levelname)s - %(message)s'
 )
+
+
+def get_binance_client():
+    logging.info("START: get_binance_client")
+    try:
+        is_lambda = os.getenv("AWS_LAMBDA_FUNCTION_NAME") is not None
+        if is_lambda:
+            secret_name = "binance_api_keys"
+            region_name = "ap-southeast-1"
+            client = boto3.client("secretsmanager", region_name=region_name)
+            response = client.get_secret_value(SecretId=secret_name)
+            secret = json.loads(response["SecretString"])
+            api_key = secret["BINANCE_API_KEY"]
+            api_secret = secret["BINANCE_API_SECRET"]
+        else:
+            api_key = os.getenv("BINANCE_API_KEY")
+            api_secret = os.getenv("BINANCE_API_SECRET")
+            if not api_key or not api_secret:
+                raise ValueError("Missing Binance API credentials")
+        client = UMFutures(key=api_key, secret=api_secret)
+        logging.info("END: get_binance_client - Successfully created UMFutures client")
+        return client
+    except Exception as e:
+        logging.error(f"Failed to retrieve Binance API keys: {str(e)}")
+        raise ValueError("Could not retrieve Binance API credentials.")
+
+
 
 def round_step_size(quantity: Union[float, Decimal], step_size: Union[float, Decimal]) -> float:
     logging.info(f"START: round_step_size - quantity: {quantity}, step_size: {step_size}")

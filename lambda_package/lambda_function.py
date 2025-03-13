@@ -3,13 +3,10 @@ import logging
 import os
 from typing import Dict
 
-import boto3
-import pandas as pd
-from binance.um_futures import UMFutures
-from order_processor import create_order_with_sl_tp, close_position, take_profit_partially, \
-    clear_all_symbol_orders
-from price_calculation_processor import get_current_balance_in_usdt, calculate_sl_tp_prices, \
-    calculate_params_with_sl_tp_wihtout_invest_percentage
+from algorithm import calculate_macd
+from binance_trade_wrapper import get_binance_client
+from order_processor import handle_order_logic
+from config import INVESTMENT_PERCENTAGE, LEVERAGE, MACD_DELTA_RATIO  # Import from config
 
 root = logging.getLogger()
 if root.handlers:
@@ -21,154 +18,7 @@ logging.basicConfig(
     format='%(filename)s:%(funcName)s - %(levelname)s - %(message)s'
 )
 
-def get_binance_client():
-    logging.info("START: get_binance_client")
-    try:
-        is_lambda = os.getenv("AWS_LAMBDA_FUNCTION_NAME") is not None
-        if is_lambda:
-            secret_name = "binance_api_keys"
-            region_name = "ap-southeast-1"
-            client = boto3.client("secretsmanager", region_name=region_name)
-            response = client.get_secret_value(SecretId=secret_name)
-            secret = json.loads(response["SecretString"])
-            api_key = secret["BINANCE_API_KEY"]
-            api_secret = secret["BINANCE_API_SECRET"]
-        else:
-            api_key = os.getenv("BINANCE_API_KEY")
-            api_secret = os.getenv("BINANCE_API_SECRET")
-            if not api_key or not api_secret:
-                raise ValueError("Missing Binance API credentials")
-        client = UMFutures(key=api_key, secret=api_secret)
-        logging.info("END: get_binance_client - Successfully created UMFutures client")
-        return client
-    except Exception as e:
-        logging.error(f"Failed to retrieve Binance API keys: {str(e)}")
-        raise ValueError("Could not retrieve Binance API credentials.")
-
-def calculate_macd(client: UMFutures, symbol: str, interval_raw: str = "1",
-                   fast_length: int = 18, slow_length: int = 39, signal_length: int = 15) -> Dict:
-    """Calculate MACD with given parameters using Binance klines."""
-    try:
-        interval_map = {
-            "1": "1m", "3": "3m", "5": "5m", "15": "15m", "30": "30m",
-            "60": "1h", "120": "2h", "240": "4h", "D": "1d", "1D": "1d"
-        }
-        interval = interval_map.get(str(interval_raw), "1m")
-        logging.info(f"Mapped interval '{interval_raw}' to Binance interval '{interval}'")
-
-        klines = client.klines(symbol=symbol, interval=interval, limit=101)
-        df = pd.DataFrame(klines, columns=[
-            'timestamp', 'open', 'high', 'low', 'close', 'volume',
-            'close_time', 'quote_asset_volume', 'trades', 'taker_buy_base',
-            'taker_buy_quote', 'ignored'
-        ])
-        logging.info(f"Latest Close Price: {df['close'].iloc[-1]}")
-        df['close'] = df['close'].astype(float)
-        ema_fast = df['close'].ewm(span=fast_length, adjust=False).mean()
-        ema_slow = df['close'].ewm(span=slow_length, adjust=False).mean()
-        macd_line = ema_fast - ema_slow
-        signal_line = macd_line.ewm(span=signal_length, adjust=False).mean()
-        histogram = macd_line - signal_line
-        latest_macd = macd_line.iloc[-1]
-        latest_signal = signal_line.iloc[-1]
-        latest_histogram = histogram.iloc[-1]
-        prev_histogram = histogram.iloc[-2]
-        logging.info(f"MACD Calculated - MACD: {latest_macd}, Signal: {latest_signal}, "
-                     f"Histogram: {latest_histogram}, Prev Histogram: {prev_histogram}")
-        return {
-            "macd": latest_macd,
-            "signal": latest_signal,
-            "histogram": latest_histogram,
-            "prev_histogram": prev_histogram
-        }
-    except Exception as e:
-        logging.error(f"Error calculating MACD: {str(e)}")
-        return {"macd": None, "signal": None, "histogram": None, "prev_histogram": None}
-
-def handle_order_logic(event: Dict) -> Dict:
-    """Handle order logic directly instead of invoking a separate Lambda."""
-    logging.info("START: handle_order_logic")
-    logging.info(f"Event received: {json.dumps(event)}")
-    try:
-        body = json.loads(event["body"]) if "body" in event else event
-        client = get_binance_client()
-        symbol = body.get("symbol")
-        action = body.get("action")
-
-        if not symbol or not action:
-            raise ValueError("Missing symbol or action")
-
-        if action == "get_balance":
-            result = get_current_balance_in_usdt(client)
-        elif action in ["open_long_sl_tp", "open_short_sl_tp"]:
-            investment_percentage = float(body["investment_percentage"])
-            max_loss_percentage = float(body["max_loss_percentage"])
-            leverage = float(body["leverage"])
-            risk_reward_ratio = body.get("risk_reward_ratio")
-            position_type = "LONG" if action == "open_long_sl_tp" else "SHORT"
-
-            calc_result = calculate_sl_tp_prices(client, symbol, position_type,
-                                                 investment_percentage, max_loss_percentage,
-                                                 risk_reward_ratio, leverage)
-            if "status" in calc_result and calc_result["status"] == "error":
-                logging.error(f"Calculation failed: {calc_result['message']}")
-                return calc_result
-
-            result = create_order_with_sl_tp(
-                client, symbol, position_type,
-                stop_loss_price=calc_result["stop_loss_price"],
-                take_profit_price=calc_result["take_profit_price"],
-                quantity=calc_result["quantity"],
-                investment_amount=calc_result["investment_amount"],
-                market_price=calc_result["market_price"]
-            )
-        elif action in ["open_long_sl_tp_without_investment", "open_short_sl_tp_without_investment"]:
-            result = close_position(client, symbol, "LONG")
-            logging.info(f"Close Long: {result}")
-            result = close_position(client, symbol, "SHORT")
-            logging.info(f"Close Short: {result}")
-
-            stop_loss_price = float(body["stop_loss_price"])
-            take_profit_price = float(body["take_profit_price"])
-            investment_percentage = float(body["investment_percentage"])
-            leverage = float(body["leverage"])
-            position_type = "LONG" if action == "open_long_sl_tp_without_investment" else "SHORT"
-
-            calc_result = calculate_params_with_sl_tp_wihtout_invest_percentage(client, symbol, position_type,
-                                                                                stop_loss_price, take_profit_price,
-                                                                                investment_percentage, leverage)
-            if "status" in calc_result and calc_result["status"] == "error":
-                logging.error(f"Calculation failed: {calc_result['message']}")
-                return calc_result
-
-            result = create_order_with_sl_tp(
-                client, symbol, position_type,
-                stop_loss_price=calc_result["stop_loss_price"],
-                take_profit_price=calc_result["take_profit_price"],
-                quantity=calc_result["quantity"],
-                investment_amount=calc_result["investment_amount"],
-                market_price=calc_result["market_price"]
-            )
-        elif action == "close_all_symbol_orders":
-            result = close_position(client, symbol, "LONG")
-            logging.info(f"Close Long: {result}")
-            result = close_position(client, symbol, "SHORT")
-            logging.info(f"Close Short: {result}")
-        elif action == "take_profit_partially":
-            result = take_profit_partially(client, symbol)
-        elif action == "clear_orders":
-            result = clear_all_symbol_orders(client, symbol)
-        else:
-            result = {"status": "error", "message": "Invalid action"}
-
-        logging.info(f"Order logic result: {result}")
-        return result
-    except Exception as e:
-        logging.error(f"Unhandled Exception: {str(e)}")
-        return {"status": "error", "message": str(e)}
-
 def lambda_handler(event: Dict, context: object) -> Dict:
-    """Handle LuxAlgo webhook and process trading signals with MACD."""
     logging.info("START: lambda_handler")
     try:
         if 'body' in event:
@@ -185,6 +35,7 @@ def lambda_handler(event: Dict, context: object) -> Dict:
         exchange = body.get('exchange')
         sector = body.get('sector', 'na')
         market = body.get('market', 'Crypto')
+        interval_raw = body.get('interval', '1')
 
         # Time Placeholders
         tf = body.get('tf')
@@ -238,7 +89,7 @@ def lambda_handler(event: Dict, context: object) -> Dict:
         macd_result = None
 
         if position_type:  # Confirmation signal (Bullish or Bearish without Exit)
-            macd_result = calculate_macd(client, symbol, tf)
+            macd_result = calculate_macd(client=client, symbol=symbol, interval_raw=interval_raw, limit=500)
             if not macd_result['histogram']:
                 raise Exception("MACD calculation failed")
 
@@ -250,14 +101,14 @@ def lambda_handler(event: Dict, context: object) -> Dict:
             if not swing and prev_histogram != 0:
                 if position_type == "LONG":
                     if latest_histogram < 0 and prev_histogram < 0:
-                        ratio_condition_met = abs(latest_histogram) < 0.66 * abs(prev_histogram)
+                        ratio_condition_met = abs(latest_histogram) < MACD_DELTA_RATIO * abs(prev_histogram)
                     elif latest_histogram > 0 and prev_histogram > 0:
-                        ratio_condition_met = abs(prev_histogram) < 0.66 * abs(latest_histogram)
+                        ratio_condition_met = abs(prev_histogram) < MACD_DELTA_RATIO * abs(latest_histogram)
                 elif position_type == "SHORT":
                     if latest_histogram < 0 and prev_histogram < 0:
-                        ratio_condition_met = abs(latest_histogram) > 0.66 * abs(prev_histogram)
+                        ratio_condition_met = abs(latest_histogram) > MACD_DELTA_RATIO * abs(prev_histogram)
                     elif latest_histogram > 0 and prev_histogram > 0:
-                        ratio_condition_met = abs(prev_histogram) > 0.66 * abs(latest_histogram)
+                        ratio_condition_met = abs(prev_histogram) > MACD_DELTA_RATIO * abs(latest_histogram)
 
             logging.info(f"MACD Results: {macd_result}")
             logging.info(f"Swing: {swing}, Ratio Condition Met: {ratio_condition_met}")
@@ -269,9 +120,9 @@ def lambda_handler(event: Dict, context: object) -> Dict:
                     "symbol": symbol,
                     "action": "open_long_sl_tp_without_investment",
                     "stop_loss_price": sl1,
-                    "take_profit_price": tp1,  # Changed from tp2 to tp1 to match response
-                    "investment_percentage": 3.0,
-                    "leverage": 10
+                    "take_profit_price": tp2,
+                    "investment_percentage": INVESTMENT_PERCENTAGE,
+                    "leverage": LEVERAGE
                 }
                 result = handle_order_logic({"body": json.dumps(order_event)})
                 if "status" in result and result["status"] == "error":
@@ -283,9 +134,9 @@ def lambda_handler(event: Dict, context: object) -> Dict:
                     "symbol": symbol,
                     "action": "open_short_sl_tp_without_investment",
                     "stop_loss_price": sl1,
-                    "take_profit_price": tp1,  # Changed from tp2 to tp1 to match response
-                    "investment_percentage": 3.0,
-                    "leverage": 10
+                    "take_profit_price": tp2,
+                    "investment_percentage": INVESTMENT_PERCENTAGE,
+                    "leverage": LEVERAGE
                 }
                 result = handle_order_logic({"body": json.dumps(order_event)})
                 if "status" in result and result["status"] == "error":
@@ -323,7 +174,7 @@ def lambda_handler(event: Dict, context: object) -> Dict:
                     "symbol": symbol,
                     "position_type": position_type,
                     "close_price": close_price,
-                    "take_profit": tp1,
+                    "take_profit": tp2,
                     "stop_loss": sl1
                 }
             })
@@ -336,9 +187,11 @@ def lambda_handler(event: Dict, context: object) -> Dict:
             "body": json.dumps({"error": f"Internal server error: {str(e)}"})
         }
 
+
 def main():
     json_input = {
         "alert": "Bullish Confirmation Signal",
+        "interval": "1",
         "ticker": "DOGEUSDT",
         "exchange": "BINANCE",
         "sector": "na",
@@ -377,6 +230,7 @@ def main():
     response = lambda_handler(event, None)
     print("Response:")
     print(json.dumps(response, indent=2))
+
 
 if __name__ == "__main__":
     main()
