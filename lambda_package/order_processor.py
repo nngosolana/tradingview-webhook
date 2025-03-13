@@ -214,9 +214,9 @@ def take_profit_partially(client: UMFutures, symbol: str, leverage: int) -> Dict
 
         partial_qty = round(position_qty * 0.5, get_exchange_info(client, symbol)[1])
         new_stop_loss = get_rounded_price(client, symbol, (entry_price + current_price) / 2)
-        take_profit_price = (current_price + abs(entry_price - current_price) * 3
+        take_profit_price = (current_price + abs(entry_price - current_price) * 20
                              if position_type == "LONG"
-                             else current_price - abs(entry_price - current_price) * 3)
+                             else current_price - abs(entry_price - current_price) * 20)
 
         side = "SELL" if position_type == "LONG" else "BUY"
         partial_order = place_market_order(client, symbol, side, leverage, quantity=partial_qty)
