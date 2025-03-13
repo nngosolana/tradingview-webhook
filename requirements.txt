@@ -2,3 +2,4 @@ binance-futures-connector
 pandas
 python-binance
 boto3
+discord-webhook

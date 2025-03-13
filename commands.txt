@@ -28,7 +28,7 @@ aws lambda invoke --function-name binance-trading-bot --log-type Tail --query 'L
 
 ------------------------------------------------------------------------------------------
 install requirements ( two steps )
-pip install -r requirements.txt --upgrade -t ./lambda_package
+pip install -r requirements.txt -t ./lambda_package
 pip download -r requirements.txt --platform manylinux2014_x86_64 --only-binary=:all: -d package/
 
 ------------------------------------------------------------------------------------------
