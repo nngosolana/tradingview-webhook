@@ -5,9 +5,9 @@ from typing import Dict, Optional
 import pandas as pd
 import boto3
 from binance.um_futures import UMFutures
-from lambda_package.order_processor import create_order_with_sl_tp, close_position, take_profit_partially, \
+from order_processor import create_order_with_sl_tp, close_position, take_profit_partially, \
     clear_all_symbol_orders
-from lambda_package.price_calculation_processor import get_current_balance_in_usdt, calculate_sl_tp_prices, \
+from price_calculation_processor import get_current_balance_in_usdt, calculate_sl_tp_prices, \
     calculate_params_with_sl_tp_wihtout_invest_percentage
 
 root = logging.getLogger()
