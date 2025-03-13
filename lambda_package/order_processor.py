@@ -59,7 +59,6 @@ def handle_order_logic(event: Dict) -> Dict:
             result = create_order_with_sl_tp(client, symbol, position_type, **calc_result, leverage=leverage)
         elif action in ["open_long_sl_tp_without_investment", "open_short_sl_tp_without_investment"]:
             position_type = "LONG" if action == "open_long_sl_tp_without_investment" else "SHORT"
-
             # Close existing positions
             if position_type == "LONG":
                 close_result = close_position(client, symbol, "SHORT", leverage)

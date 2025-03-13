@@ -141,16 +141,15 @@ def lambda_handler(event: Dict, context: object) -> Dict:
                 result = handle_order_logic({"body": json.dumps(order_event)})
                 if "status" in result and result["status"] == "error":
                     message = f"SHORT SETUP - Failed: {result['message']}"
-            else:
-                logging.info(f"NON-CONFIRM SIGNAL SETUP - Swing: {swing}, Ratio: {ratio_condition_met}")
-                message = "NON-CONFIRM SIGNAL SETUP - Take Profit Partially"
+            else :
+                logging.info("The confirmation is not meet requirement, safety, close all positions")
                 order_event = {
                     "symbol": symbol,
-                    "action": "take_profit_partially"
+                    "action": "close_all_symbol_orders"
                 }
                 result = handle_order_logic({"body": json.dumps(order_event)})
                 if "status" in result and result["status"] == "error":
-                    message = f"PARTIAL TAKE PROFIT - Failed: {result['message']}"
+                    message = f"Close Position - Failed: {result['message']}"
 
         if is_exit:  # Exit signal (Bullish Exit or Bearish Exit)
             logging.info("TRIGGER EXIT SETUP")
