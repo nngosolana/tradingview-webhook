@@ -18,24 +18,22 @@ logger = logging.getLogger(__name__)
 class SignalData:
     """Class to store parsed signal data as attributes."""
 
-    def __init__(self, event: dict):
-        body = event.get('body', event)
-
+    def __init__(self, data: dict):  # Changed parameter name to 'data' for clarity
         # Symbol data
-        self.alert = body.get('alert', '')
-        self.symbol = body.get('ticker', '')
-        self.exchange = body.get('exchange', '')
-        self.sector = body.get('sector', 'na')
-        self.market = body.get('market', 'Crypto')
-        self.interval_raw = body.get('interval', '1')
-        self.tf = body.get('tf', '')
-        self.bartime = body.get('bartime', '')
-        self.year = body.get('year', '')
-        self.month = body.get('month', '')
-        self.day = body.get('day', '')
+        self.alert = data.get('alert', '')
+        self.symbol = data.get('ticker', '')
+        self.exchange = data.get('exchange', '')
+        self.sector = data.get('sector', 'na')
+        self.market = data.get('market', 'Crypto')
+        self.interval_raw = data.get('interval', '1')
+        self.tf = data.get('tf', '')
+        self.bartime = data.get('bartime', '')
+        self.year = data.get('year', '')
+        self.month = data.get('month', '')
+        self.day = data.get('day', '')
 
         # OHLCV data
-        ohlcv = body.get('ohlcv', {})
+        ohlcv = data.get('ohlcv', {})
         self.open_price = float(ohlcv.get('open', 0)) if ohlcv.get('open') is not None else 0.0
         self.high_price = float(ohlcv.get('high', 0)) if ohlcv.get('high') is not None else 0.0
         self.low_price = float(ohlcv.get('low', 0)) if ohlcv.get('low') is not None else 0.0
@@ -43,7 +41,7 @@ class SignalData:
         self.volume = float(ohlcv.get('volume', 0)) if ohlcv.get('volume') is not None else 0.0
 
         # Indicators
-        indicators = body.get('indicators', {})
+        indicators = data.get('indicators', {})
         self.smart_trail = float(indicators.get('smart_trail', 0)) if indicators.get(
             'smart_trail') is not None else None
         self.rz_r3 = float(indicators.get('rz_r3', 0)) if indicators.get('rz_r3') is not None else None
@@ -71,16 +69,28 @@ class TradingSignalProcessor:
             raise Exception("Failed to initialize Binance client")
 
     def extract_event_data(self, event) -> SignalData:
+        """Extract signal data from the event's 'body' field and parse it."""
         logger.info("START: extract_event_data")
-        logger.info(f"Event: {event}")
         try:
-            # If event is a string, parse it as JSON
-            if isinstance(event, str):
-                event = json.loads(event)
-            elif not isinstance(event, dict):
-                raise ValueError("Event must be a string (JSON) or dictionary")
+            # Log the raw event for debugging
+            logger.info(f"Raw event: {event}")
 
-            signal_data = SignalData(event)
+            # Expect event to be a dict from API Gateway with a 'body' field
+            if not isinstance(event, dict):
+                raise ValueError("Event must be a dictionary")
+
+            # Extract the 'body' field, which contains the signal data as a string
+            body = event.get('body')
+            if body is None:
+                raise ValueError("Event is missing 'body' field")
+
+            # Parse the body string into a dictionary
+            if isinstance(body, str):
+                body = json.loads(body)
+            elif not isinstance(body, dict):
+                raise ValueError("Body must be a string (JSON) or dictionary")
+
+            signal_data = SignalData(body)
             logger.info(f"Extracted data: {vars(signal_data)}")
             return signal_data
         except Exception as e:
