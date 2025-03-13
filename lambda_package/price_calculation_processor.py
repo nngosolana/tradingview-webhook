@@ -1,6 +1,7 @@
 import logging
-from binance.um_futures import UMFutures
+
 from binance.error import ClientError
+from binance.um_futures import UMFutures
 from binance_trade_wrapper import get_exchange_info
 
 root = logging.getLogger()

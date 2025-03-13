@@ -1,8 +1,7 @@
 import logging
-import math
 
-from binance.um_futures import UMFutures
 from binance.error import ClientError
+from binance.um_futures import UMFutures
 from binance_trade_wrapper import place_order, place_market_order, get_exchange_info, get_rounded_price
 
 root = logging.getLogger()

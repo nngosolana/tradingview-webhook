@@ -1,9 +1,10 @@
 import json
 import logging
 import os
-from typing import Dict, Optional
-import pandas as pd
+from typing import Dict
+
 import boto3
+import pandas as pd
 from binance.um_futures import UMFutures
 from order_processor import create_order_with_sl_tp, close_position, take_profit_partially, \
     clear_all_symbol_orders

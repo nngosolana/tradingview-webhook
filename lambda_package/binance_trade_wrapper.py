@@ -1,7 +1,8 @@
 import logging
-from binance.um_futures import UMFutures
 from decimal import Decimal
-from typing import Union, Optional, Dict, List
+from typing import Union, Optional
+
+from binance.um_futures import UMFutures
 
 root = logging.getLogger()
 if root.handlers:
