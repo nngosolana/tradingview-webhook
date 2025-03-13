@@ -1,3 +1,4 @@
+import json
 import logging
 from typing import Optional, Tuple
 
@@ -13,8 +14,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
 class SignalData:
     """Class to store parsed signal data as attributes."""
+
     def __init__(self, event: dict):
         body = event.get('body', event)
 
@@ -41,7 +44,8 @@ class SignalData:
 
         # Indicators
         indicators = body.get('indicators', {})
-        self.smart_trail = float(indicators.get('smart_trail', 0)) if indicators.get('smart_trail') is not None else None
+        self.smart_trail = float(indicators.get('smart_trail', 0)) if indicators.get(
+            'smart_trail') is not None else None
         self.rz_r3 = float(indicators.get('rz_r3', 0)) if indicators.get('rz_r3') is not None else None
         self.rz_r2 = float(indicators.get('rz_r2', 0)) if indicators.get('rz_r2') is not None else None
         self.rz_r1 = float(indicators.get('rz_r1', 0)) if indicators.get('rz_r1') is not None else None
@@ -57,6 +61,7 @@ class SignalData:
         self.tp2 = float(indicators.get('tp2', 0)) if indicators.get('tp2') is not None else None
         self.sl2 = float(indicators.get('sl2', 0)) if indicators.get('sl2') is not None else None
 
+
 class TradingSignalProcessor:
     """Class to process trading signals from webhook events."""
 
@@ -65,10 +70,15 @@ class TradingSignalProcessor:
         if not self.client:
             raise Exception("Failed to initialize Binance client")
 
-    def extract_event_data(self, event: dict) -> SignalData:
-        """Extract all relevant data from the event into a SignalData object."""
+    def extract_event_data(self, event) -> SignalData:
         logger.info("START: extract_event_data")
         try:
+            # If event is a string, parse it as JSON
+            if isinstance(event, str):
+                event = json.loads(event)
+            elif not isinstance(event, dict):
+                raise ValueError("Event must be a string (JSON) or dictionary")
+
             signal_data = SignalData(event)
             logger.info(f"Extracted data: {vars(signal_data)}")
             return signal_data
@@ -77,7 +87,6 @@ class TradingSignalProcessor:
             raise
 
     def detect_position_type(self, alert: str) -> Tuple[Optional[str], str, Optional[float]]:
-        """Detect position type and signal type from alert."""
         logger.info(f"START: detect_position_type - Alert: {alert}")
         position_type = None
         signal_type = None
@@ -91,15 +100,25 @@ class TradingSignalProcessor:
             except ValueError:
                 continue
 
+        # Prioritize Confirmation over Exit
         if "Bullish Confirmation" in alert and "Exit" not in alert:
             position_type = "LONG"
             signal_type = "position_trigger"
         elif "Bearish Confirmation" in alert and "Exit" not in alert:
             position_type = "SHORT"
             signal_type = "position_trigger"
-        elif "Bullish Exit" in alert or "Bearish Exit" in alert:
+        elif "Bullish Confirmation" in alert:  # New condition for mixed signals
+            position_type = "LONG"
+            signal_type = "position_trigger"
+        elif "Bearish Confirmation" in alert:
+            position_type = "SHORT"
+            signal_type = "position_trigger"
+        elif "Bullish Exit" in alert:
+            position_type = "LONG"
             signal_type = "position_exit"
-            position_type = "LONG" if "Bullish Exit" in alert else "SHORT"
+        elif "Bearish Exit" in alert:
+            position_type = "SHORT"
+            signal_type = "position_exit"
         elif "TP1" in alert and "Reached" in alert:
             signal_type = "tp_reach"
         elif "TP2" in alert and "Reached" in alert:
@@ -116,7 +135,8 @@ class TradingSignalProcessor:
         """Check if a position of the given type exists for the symbol."""
         logger.info(f"Checking existing position for {symbol}, type: {position_type}")
         position_info = self.client.get_position_risk(symbol=symbol)
-        position = next((pos for pos in position_info if pos["symbol"] == symbol and float(pos["positionAmt"]) != 0), None)
+        position = next((pos for pos in position_info if pos["symbol"] == symbol and float(pos["positionAmt"]) != 0),
+                        None)
 
         if position:
             current_position_type = "LONG" if float(position["positionAmt"]) > 0 else "SHORT"
@@ -193,7 +213,8 @@ class TradingSignalProcessor:
                 message = f"{position_type} SETUP - Trade Triggered"
                 logger.info(message)
                 if not ENABLE_MACD_CHECK or self.verify_macd_signal(data.symbol, data.interval_raw, position_type):
-                    logger.info(f"TRIGGER {position_type} SETUP - MACD check {'disabled' if not ENABLE_MACD_CHECK else 'passed'}")
+                    logger.info(
+                        f"TRIGGER {position_type} SETUP - MACD check {'disabled' if not ENABLE_MACD_CHECK else 'passed'}")
                     clear_result = handle_order_logic("close_all_symbol_orders", data.symbol)
                     if "error" in str(clear_result.get("status", "")):
                         message = f"{position_type} SETUP - Failed to clear existing orders: {clear_result.get('message', 'Unknown error')}"
@@ -254,6 +275,7 @@ class TradingSignalProcessor:
             }
         }
 
+
 def lambda_handler(event: dict, context: object) -> dict:
     """AWS Lambda handler function."""
     logger.info("START: lambda_handler")
@@ -269,6 +291,7 @@ def lambda_handler(event: dict, context: object) -> dict:
             "statusCode": 500,
             "body": {"error": f"Internal server error: {str(e)}"}
         }
+
 
 def main():
     """Main function for local testing."""
@@ -302,6 +325,7 @@ def main():
     from json import dumps
     print(dumps(response, indent=2))
     logger.info("END: main")
+
 
 if __name__ == "__main__":
     main()
