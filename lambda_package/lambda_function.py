@@ -5,6 +5,10 @@ from typing import Dict, Optional
 import pandas as pd
 import boto3
 from binance.um_futures import UMFutures
+from lambda_package.order_processor import create_order_with_sl_tp, close_position, take_profit_partially, \
+    clear_all_symbol_orders
+from lambda_package.price_calculation_processor import get_current_balance_in_usdt, calculate_sl_tp_prices, \
+    calculate_params_with_sl_tp_wihtout_invest_percentage
 
 root = logging.getLogger()
 if root.handlers:
@@ -15,8 +19,6 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(filename)s:%(funcName)s - %(levelname)s - %(message)s'
 )
-
-lambda_client = boto3.client('lambda')
 
 def get_binance_client():
     logging.info("START: get_binance_client")
@@ -82,28 +84,87 @@ def calculate_macd(client: UMFutures, symbol: str, interval_raw: str = "1",
         logging.error(f"Error calculating MACD: {str(e)}")
         return {"macd": None, "signal": None, "histogram": None, "prev_histogram": None}
 
-def invoke_trading_lambda(symbol: str, action: str, position_type: str = None,
-                          take_profit: float = None, stop_loss: float = None, close_price: float = None):
-    """Invoke the trading Lambda function."""
+def handle_order_logic(event: Dict) -> Dict:
+    """Handle order logic directly instead of invoking a separate Lambda."""
+    logging.info("START: handle_order_logic")
+    logging.info(f"Event received: {json.dumps(event)}")
     try:
-        payload = {"action": action, "symbol": symbol}
-        if action in ["open_long_sl_tp_without_investment", "open_short_sl_tp_without_investment"]:
-            payload.update({
-                "stop_loss_price": stop_loss,
-                "take_profit_price": take_profit,
-                "investment_percentage": 3.0,
-                "leverage": 10
-            })
-        response = lambda_client.invoke(
-            FunctionName='binance-trading-bot',
-            InvocationType='Event',
-            Payload=json.dumps(payload)
-        )
-        logging.info(f"Invoked trading Lambda with payload: {payload}, response: {response}")
-        return True
+        body = json.loads(event["body"]) if "body" in event else event
+        client = get_binance_client()
+        symbol = body.get("symbol")
+        action = body.get("action")
+
+        if not symbol or not action:
+            raise ValueError("Missing symbol or action")
+
+        if action == "get_balance":
+            result = get_current_balance_in_usdt(client)
+        elif action in ["open_long_sl_tp", "open_short_sl_tp"]:
+            investment_percentage = float(body["investment_percentage"])
+            max_loss_percentage = float(body["max_loss_percentage"])
+            leverage = float(body["leverage"])
+            risk_reward_ratio = body.get("risk_reward_ratio")
+            position_type = "LONG" if action == "open_long_sl_tp" else "SHORT"
+
+            calc_result = calculate_sl_tp_prices(client, symbol, position_type,
+                                                 investment_percentage, max_loss_percentage,
+                                                 risk_reward_ratio, leverage)
+            if "status" in calc_result and calc_result["status"] == "error":
+                logging.error(f"Calculation failed: {calc_result['message']}")
+                return calc_result
+
+            result = create_order_with_sl_tp(
+                client, symbol, position_type,
+                stop_loss_price=calc_result["stop_loss_price"],
+                take_profit_price=calc_result["take_profit_price"],
+                quantity=calc_result["quantity"],
+                investment_amount=calc_result["investment_amount"],
+                market_price=calc_result["market_price"]
+            )
+        elif action in ["open_long_sl_tp_without_investment", "open_short_sl_tp_without_investment"]:
+            result = close_position(client, symbol, "LONG")
+            logging.info(f"Close Long: {result}")
+            result = close_position(client, symbol, "SHORT")
+            logging.info(f"Close Short: {result}")
+
+            stop_loss_price = float(body["stop_loss_price"])
+            take_profit_price = float(body["take_profit_price"])
+            investment_percentage = float(body["investment_percentage"])
+            leverage = float(body["leverage"])
+            position_type = "LONG" if action == "open_long_sl_tp_without_investment" else "SHORT"
+
+            calc_result = calculate_params_with_sl_tp_wihtout_invest_percentage(client, symbol, position_type,
+                                                                                stop_loss_price, take_profit_price,
+                                                                                investment_percentage, leverage)
+            if "status" in calc_result and calc_result["status"] == "error":
+                logging.error(f"Calculation failed: {calc_result['message']}")
+                return calc_result
+
+            result = create_order_with_sl_tp(
+                client, symbol, position_type,
+                stop_loss_price=calc_result["stop_loss_price"],
+                take_profit_price=calc_result["take_profit_price"],
+                quantity=calc_result["quantity"],
+                investment_amount=calc_result["investment_amount"],
+                market_price=calc_result["market_price"]
+            )
+        elif action == "close_all_symbol_orders":
+            result = close_position(client, symbol, "LONG")
+            logging.info(f"Close Long: {result}")
+            result = close_position(client, symbol, "SHORT")
+            logging.info(f"Close Short: {result}")
+        elif action == "take_profit_partially":
+            result = take_profit_partially(client, symbol)
+        elif action == "clear_orders":
+            result = clear_all_symbol_orders(client, symbol)
+        else:
+            result = {"status": "error", "message": "Invalid action"}
+
+        logging.info(f"Order logic result: {result}")
+        return result
     except Exception as e:
-        logging.error(f"Failed to invoke trading Lambda: {str(e)}")
-        return False
+        logging.error(f"Unhandled Exception: {str(e)}")
+        return {"status": "error", "message": str(e)}
 
 def lambda_handler(event: Dict, context: object) -> Dict:
     """Handle LuxAlgo webhook and process trading signals with MACD."""
@@ -203,22 +264,52 @@ def lambda_handler(event: Dict, context: object) -> Dict:
             if position_type == "LONG" and (swing or ratio_condition_met):
                 logging.info(f"TRIGGER LONG SETUP - Swing: {swing}, Ratio: {ratio_condition_met}")
                 message = "LONG SETUP - Trade Triggered"
-                invoke_trading_lambda(symbol, "open_long_sl_tp_without_investment",
-                                      position_type, tp1, sl1, close_price)
+                order_event = {
+                    "symbol": symbol,
+                    "action": "open_long_sl_tp_without_investment",
+                    "stop_loss_price": sl1,
+                    "take_profit_price": tp1,  # Changed from tp2 to tp1 to match response
+                    "investment_percentage": 3.0,
+                    "leverage": 10
+                }
+                result = handle_order_logic({"body": json.dumps(order_event)})
+                if "status" in result and result["status"] == "error":
+                    message = f"LONG SETUP - Failed: {result['message']}"
             elif position_type == "SHORT" and (swing or ratio_condition_met):
                 logging.info(f"TRIGGER SHORT SETUP - Swing: {swing}, Ratio: {ratio_condition_met}")
                 message = "SHORT SETUP - Trade Triggered"
-                invoke_trading_lambda(symbol, "open_short_sl_tp_without_investment",
-                                      position_type, tp1, sl1, close_price)
+                order_event = {
+                    "symbol": symbol,
+                    "action": "open_short_sl_tp_without_investment",
+                    "stop_loss_price": sl1,
+                    "take_profit_price": tp1,  # Changed from tp2 to tp1 to match response
+                    "investment_percentage": 3.0,
+                    "leverage": 10
+                }
+                result = handle_order_logic({"body": json.dumps(order_event)})
+                if "status" in result and result["status"] == "error":
+                    message = f"SHORT SETUP - Failed: {result['message']}"
             else:
                 logging.info(f"NON-CONFIRM SIGNAL SETUP - Swing: {swing}, Ratio: {ratio_condition_met}")
                 message = "NON-CONFIRM SIGNAL SETUP - Take Profit Partially"
-                invoke_trading_lambda(symbol, "take_profit_partially")
+                order_event = {
+                    "symbol": symbol,
+                    "action": "take_profit_partially"
+                }
+                result = handle_order_logic({"body": json.dumps(order_event)})
+                if "status" in result and result["status"] == "error":
+                    message = f"PARTIAL TAKE PROFIT - Failed: {result['message']}"
 
         if is_exit:  # Exit signal (Bullish Exit or Bearish Exit)
             logging.info("TRIGGER EXIT SETUP")
             message = "EXIT SETUP - Partial Take Profit Triggered"
-            invoke_trading_lambda(symbol, "take_profit_partially")
+            order_event = {
+                "symbol": symbol,
+                "action": "take_profit_partially"
+            }
+            result = handle_order_logic({"body": json.dumps(order_event)})
+            if "status" in result and result["status"] == "error":
+                message = f"EXIT SETUP - Failed: {result['message']}"
 
         return {
             "statusCode": 200,
