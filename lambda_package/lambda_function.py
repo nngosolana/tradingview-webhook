@@ -72,6 +72,7 @@ class TradingSignalProcessor:
 
     def extract_event_data(self, event) -> SignalData:
         logger.info("START: extract_event_data")
+        logger.info(f"Event: {event}")
         try:
             # If event is a string, parse it as JSON
             if isinstance(event, str):
