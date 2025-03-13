@@ -50,10 +50,10 @@ def calculate_macd(client: UMFutures, symbol: str, interval_raw: str = "1",
             "1": "1m", "3": "3m", "5": "5m", "15": "15m", "30": "30m",
             "60": "1h", "120": "2h", "240": "4h", "D": "1d", "1D": "1d"
         }
-        interval = interval_map.get(str(interval_raw), "1m")  # Default to 1m
+        interval = interval_map.get(str(interval_raw), "1m")
         logging.info(f"Mapped interval '{interval_raw}' to Binance interval '{interval}'")
 
-        klines = client.klines(symbol=symbol, interval=interval, limit=101)  # 101 for prev histogram
+        klines = client.klines(symbol=symbol, interval=interval, limit=101)
         df = pd.DataFrame(klines, columns=[
             'timestamp', 'open', 'high', 'low', 'close', 'volume',
             'close_time', 'quote_asset_volume', 'trades', 'taker_buy_base',
@@ -182,26 +182,36 @@ def lambda_handler(event: Dict, context: object) -> Dict:
 
             latest_histogram = macd_result['histogram']
             prev_histogram = macd_result['prev_histogram']
-            histogram_ratio = abs(latest_histogram) / abs(prev_histogram) if prev_histogram != 0 else float('inf')
             swing = (latest_histogram * prev_histogram < 0) if prev_histogram != 0 else False
+            ratio_condition_met = False
+
+            if not swing and prev_histogram != 0:
+                if position_type == "LONG":
+                    if latest_histogram < 0 and prev_histogram < 0:
+                        ratio_condition_met = abs(latest_histogram) < 0.66 * abs(prev_histogram)
+                    elif latest_histogram > 0 and prev_histogram > 0:
+                        ratio_condition_met = abs(prev_histogram) < 0.66 * abs(latest_histogram)
+                elif position_type == "SHORT":
+                    if latest_histogram < 0 and prev_histogram < 0:
+                        ratio_condition_met = abs(latest_histogram) > 0.66 * abs(prev_histogram)
+                    elif latest_histogram > 0 and prev_histogram > 0:
+                        ratio_condition_met = abs(prev_histogram) > 0.66 * abs(latest_histogram)
 
             logging.info(f"MACD Results: {macd_result}")
-            logging.info(f"Histogram Ratio: {histogram_ratio}, Swing: {swing}")
+            logging.info(f"Swing: {swing}, Ratio Condition Met: {ratio_condition_met}")
 
-            if (position_type == "LONG" and latest_histogram > 0 and
-                    (swing or (prev_histogram != 0 and histogram_ratio <= 0.66))):
-                logging.info(f"TRIGGER LONG SETUP - Ratio: {histogram_ratio}, Swing: {swing}")
+            if position_type == "LONG" and (swing or ratio_condition_met):
+                logging.info(f"TRIGGER LONG SETUP - Swing: {swing}, Ratio: {ratio_condition_met}")
                 message = "LONG SETUP - Trade Triggered"
                 invoke_trading_lambda(symbol, "open_long_sl_tp_without_investment",
                                       position_type, tp1, sl1, close_price)
-            elif (position_type == "SHORT" and latest_histogram < 0 and
-                  (swing or (prev_histogram != 0 and histogram_ratio >= 0.66))):
-                logging.info(f"TRIGGER SHORT SETUP - Ratio: {histogram_ratio}, Swing: {swing}")
+            elif position_type == "SHORT" and (swing or ratio_condition_met):
+                logging.info(f"TRIGGER SHORT SETUP - Swing: {swing}, Ratio: {ratio_condition_met}")
                 message = "SHORT SETUP - Trade Triggered"
                 invoke_trading_lambda(symbol, "open_short_sl_tp_without_investment",
                                       position_type, tp1, sl1, close_price)
             else:
-                logging.info(f"NON-CONFIRM SIGNAL SETUP - Ratio: {histogram_ratio}, Swing: {swing}")
+                logging.info(f"NON-CONFIRM SIGNAL SETUP - Swing: {swing}, Ratio: {ratio_condition_met}")
                 message = "NON-CONFIRM SIGNAL SETUP - Take Profit Partially"
                 invoke_trading_lambda(symbol, "take_profit_partially")
 
