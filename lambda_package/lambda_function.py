@@ -310,7 +310,7 @@ def main():
     test_input = {
         "alert": "Bullish Confirmation",
         "interval": "1",
-        "ticker": "DOGEUSDT",
+        "ticker": "ETHUSDT",
         "exchange": "BINANCE",
         "sector": "na",
         "market": "Crypto",

@@ -1,11 +1,14 @@
 import logging
 from typing import Optional, Dict
+from discord_webhook import DiscordWebhook
 
 from binance.error import ClientError
 from binance.um_futures import UMFutures
 from binance_trade_wrapper import get_binance_client, place_order, place_market_order, get_exchange_info, get_rounded_price
-from config import INVESTMENT_PERCENTAGE, MAX_LOSS_PERCENTAGE, LEVERAGE, RISK_REWARD_RATIO
-from price_calculation_processor import get_current_balance_in_usdt, calculate_sl_tp_prices, calculate_params_with_sl_tp_without_invest_percentage
+from config import (INVESTMENT_PERCENTAGE, MAX_LOSS_PERCENTAGE, LEVERAGE, RISK_REWARD_RATIO,
+                    TRANSACTION_FEE_RATE, DISCORD_WEBHOOK_URL)
+from price_calculation_processor import (get_current_balance_in_usdt, calculate_sl_tp_prices,
+                                         calculate_params_with_sl_tp_without_invest_percentage)
 
 # Configure logging
 logging.basicConfig(
@@ -153,6 +156,65 @@ def create_order_with_sl_tp(client: UMFutures, symbol: str, position_type: str, 
         logger.error(f"Unexpected error: {str(e)}")
         return {"status": "error", "message": str(e)}
 
+def _calculate_pnl(client: UMFutures, symbol: str, position_type: str, exit_price: float, quantity: float) -> Dict:
+    """Calculate PNL including fees and percentages."""
+    try:
+        position_info = client.get_position_risk(symbol=symbol)
+        position = next((pos for pos in position_info if pos["symbol"] == symbol and float(pos["positionAmt"]) != 0), None)
+        if not position:
+            logger.warning(f"No active position found for {symbol}")
+            return {"pnl": 0.0, "investment": 0.0, "pnl_percent_investment": 0.0, "pnl_percent_balance": 0.0}
+
+        entry_price = float(position["entryPrice"])
+        direction = 1 if position_type == "LONG" else -1
+
+        # Calculate raw PNL
+        raw_pnl = (exit_price - entry_price) * quantity * direction
+
+        # Calculate fees (entry + exit)
+        entry_fee = entry_price * quantity * TRANSACTION_FEE_RATE
+        exit_fee = exit_price * quantity * TRANSACTION_FEE_RATE
+        total_fees = entry_fee + exit_fee
+
+        # Net PNL
+        net_pnl = raw_pnl - total_fees
+
+        # Get investment and total balance
+        investment = float(position["positionInitialMargin"])
+        account_info = client.account()
+        total_balance = float(account_info["totalWalletBalance"])
+
+        # Calculate percentages
+        pnl_percent_investment = (net_pnl / investment) * 100 if investment > 0 else 0.0
+        pnl_percent_balance = (net_pnl / total_balance) * 100 if total_balance > 0 else 0.0
+
+        logger.info(f"PNL Calculation - Symbol: {symbol}, Entry: {entry_price}, Exit: {exit_price}, "
+                    f"Quantity: {quantity}, Raw PNL: {raw_pnl}, Fees: {total_fees}, Net PNL: {net_pnl}, "
+                    f"Investment: {investment}, Total Balance: {total_balance}, "
+                    f"PNL % Investment: {pnl_percent_investment}, PNL % Balance: {pnl_percent_balance}")
+
+        return {
+            "pnl": net_pnl,
+            "investment": investment,
+            "pnl_percent_investment": pnl_percent_investment,
+            "pnl_percent_balance": pnl_percent_balance
+        }
+    except Exception as e:
+        logger.error(f"Error calculating PNL: {str(e)}")
+        return {"pnl": 0.0, "investment": 0.0, "pnl_percent_investment": 0.0, "pnl_percent_balance": 0.0}
+
+def _send_discord_notification(message: str):
+    """Send a message to Discord via webhook."""
+    try:
+        webhook = DiscordWebhook(url=DISCORD_WEBHOOK_URL, content=message)
+        response = webhook.execute()
+        if response.status_code == 204:
+            logger.info("Discord notification sent successfully")
+        else:
+            logger.error(f"Failed to send Discord notification: {response.status_code} - {response.text}")
+    except Exception as e:
+        logger.error(f"Error sending Discord notification: {str(e)}")
+
 def close_position(client: UMFutures, symbol: str, position_type: str, leverage: int):
     logger.info(f"START: close_position - {position_type} for {symbol}")
     try:
@@ -168,17 +230,33 @@ def close_position(client: UMFutures, symbol: str, position_type: str, leverage:
 
         position_qty = abs(float(position["positionAmt"]))
         side = "SELL" if position_type == "LONG" else "BUY"
+        current_price = float(client.ticker_price(symbol=symbol)["price"])
         close_order = place_market_order(client, symbol, side, leverage, quantity=position_qty)
 
         if not close_order:
             logger.error("Failed to place close order")
             return {"status": "error", "message": "Failed to close position"}
 
+        # Calculate PNL
+        pnl_data = _calculate_pnl(client, symbol, position_type, current_price, position_qty)
+
+        # Send Discord notification
+        discord_msg = (f"Position Closed - {symbol} ({position_type})\n"
+                       f"PNL: {pnl_data['pnl']:.2f} USDT\n"
+                       f"Investment: {pnl_data['investment']:.2f} USDT\n"
+                       f"% Investment: {pnl_data['pnl_percent_investment']:.2f}%\n"
+                       f"% Total Balance: {pnl_data['pnl_percent_balance']:.2f}%")
+        _send_discord_notification(discord_msg)
+
         logger.info(f"Close order placed: {close_order}")
         return {
             "status": "success",
             "close_order": close_order,
-            "closed_quantity": position_qty
+            "closed_quantity": position_qty,
+            "pnl": pnl_data["pnl"],
+            "investment": pnl_data["investment"],
+            "pnl_percent_investment": pnl_data["pnl_percent_investment"],
+            "pnl_percent_balance": pnl_data["pnl_percent_balance"]
         }
     except ClientError as e:
         logger.error(f"ClientError while closing position: {e.error_message}")
@@ -224,6 +302,17 @@ def take_profit_partially(client: UMFutures, symbol: str, leverage: int) -> Dict
             logger.error("Failed to place partial profit order")
             return {"status": "error", "message": "Partial profit order failed"}
 
+        # Calculate PNL for partial close
+        pnl_data = _calculate_pnl(client, symbol, position_type, current_price, partial_qty)
+
+        # Send Discord notification
+        discord_msg = (f"Partial Take Profit - {symbol} ({position_type})\n"
+                       f"PNL: {pnl_data['pnl']:.2f} USDT\n"
+                       f"Investment: {pnl_data['investment']:.2f} USDT\n"
+                       f"% Investment: {pnl_data['pnl_percent_investment']:.2f}%\n"
+                       f"% Total Balance: {pnl_data['pnl_percent_balance']:.2f}%")
+        _send_discord_notification(discord_msg)
+
         if not clear_all_symbol_orders(client, symbol):
             logger.error(f"Failed to cancel existing orders for {symbol}")
 
@@ -240,7 +329,11 @@ def take_profit_partially(client: UMFutures, symbol: str, leverage: int) -> Dict
             "remaining_quantity": remaining_qty,
             "new_stop_loss_price": new_stop_loss,
             "take_profit_price": take_profit_price,
-            "market_price": current_price
+            "market_price": current_price,
+            "pnl": pnl_data["pnl"],
+            "investment": pnl_data["investment"],
+            "pnl_percent_investment": pnl_data["pnl_percent_investment"],
+            "pnl_percent_balance": pnl_data["pnl_percent_balance"]
         }
         logger.info(f"Partial profit taken successfully: {result}")
         return result
