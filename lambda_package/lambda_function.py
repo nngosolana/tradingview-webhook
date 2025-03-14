@@ -310,6 +310,11 @@ class TradingSignalProcessor:
                                 f"Volume: {data.volume}"
                             )
                             _send_discord_notification(discord_msg)
+                            logger.info("Signal conditions not met, closing all positions for safety")
+                            message = "CLOSE ALL POSITIONS - Safety Triggered"
+                            result = handle_order_logic("close_all_symbol_orders", data.symbol)
+                            if result.get("status") == "error":
+                                message = f"Close Position - Failed: {result.get('message', 'Unknown error')}"
                         else:
                             result = handle_order_logic(
                                 f"open_{position_type.lower()}_sl_tp_without_investment",

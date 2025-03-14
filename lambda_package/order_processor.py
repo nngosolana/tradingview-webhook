@@ -211,6 +211,7 @@ def _calculate_pnl(client: UMFutures, symbol: str, position_type: str, exit_pric
         logger.error(f"Error calculating PNL: {str(e)}")
         return {"pnl": 0.0, "investment": 0.0, "pnl_percent_investment": 0.0, "pnl_percent_balance": 0.0}
 
+
 def close_position(client: UMFutures, symbol: str, position_type: str, leverage: int):
     logger.info(f"START: close_position - {position_type} for {symbol}")
     try:
@@ -238,7 +239,7 @@ def close_position(client: UMFutures, symbol: str, position_type: str, leverage:
 
         if pnl_data["pnl"] != 0 and pnl_data['investment'] != 0:
             # Send Discord notification
-            discord_msg = ( f"-------------------------CLOSE POSITION---------------------------------\n"
+            discord_msg = (f"-------------------------CLOSE POSITION---------------------------------\n"
                            f"Position Closed - {symbol} ({position_type})\n"
                            f"PNL: {pnl_data['pnl']:.2f} USDT\n"
                            f"Investment: {pnl_data['investment']:.2f} USDT\n"
@@ -307,11 +308,13 @@ def take_profit_partially(client: UMFutures, symbol: str, leverage: int) -> Dict
         pnl_data = _calculate_pnl(client, symbol, position_type, current_price, partial_qty)
 
         # Send Discord notification
-        discord_msg = (f"Partial Take Profit - {symbol} ({position_type})\n"
-                       f"PNL: {pnl_data['pnl']:.2f} USDT\n"
-                       f"Investment: {pnl_data['investment']:.2f} USDT\n"
-                       f"% Investment: {pnl_data['pnl_percent_investment']:.2f}%\n"
-                       f"% Total Balance: {pnl_data['pnl_percent_balance']:.2f}%")
+        discord_msg = (
+            f"-------------------------TAKE PARTIALLY PROFIT POSITION---------------------------------\n"
+            f"Partial Take Profit - {symbol} ({position_type})\n"
+            f"PNL: {pnl_data['pnl']:.2f} USDT\n"
+            f"Investment: {pnl_data['investment']:.2f} USDT\n"
+            f"% Investment: {pnl_data['pnl_percent_investment']:.2f}%\n"
+            f"% Total Balance: {pnl_data['pnl_percent_balance']:.2f}%")
         _send_discord_notification(discord_msg)
 
         if not clear_all_symbol_orders(client, symbol):
