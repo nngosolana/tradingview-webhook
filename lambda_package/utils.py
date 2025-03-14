@@ -16,6 +16,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(filename)s:%(funcName)s - %(levelname)s - %(message)s'
 )
+logger = logging.getLogger(__name__)
 
 def _send_discord_notification(message: str):
     """Send a message to Discord via webhook."""
