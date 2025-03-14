@@ -291,23 +291,21 @@ class TradingSignalProcessor:
                         message = f"{position_type} SETUP - Failed to clear existing orders: {clear_result.get('message', 'Unknown error')}"
                         logger.error(message)
                     else:
+                        # Shorten alert if too long
+                        alert_short = data.alert[:10] + "+" if len(data.alert) > 10 else data.alert
                         if signal_score < SIGNAL_SCORE_THRESHOLD:  # Adjustable threshold
                             message = f"Signal rejected - Score {signal_score}/100 too low"
                             logger.info(message)
                             discord_msg = (
-                                f"-------------------------REJECT POSITION---------------------------------\n"
-                                f"**Signal Rejected - {data.symbol} ({position_type})**\n"
-                                f"Reason: Score {signal_score}/100 < Threshold {SIGNAL_SCORE_THRESHOLD}\n"
-                                f"Alert: {data.alert}\n"
-                                f"Close Price: {data.close_price:.5f}\n"
-                                f"Open Price: {data.open_price:.5f}\n"
-                                f"Trend Tracer: {data.trend_tracer:.5f}\n"
-                                f"Smart Trail: {data.smart_trail:.5f}\n"
-                                f"Neo Lead: {data.neo_lead:.5f}\n"
-                                f"Neo Lag: {data.neo_lag:.5f}\n"
-                                f"RZ S1: {data.rz_s1:.5f}\n"
-                                f"RZ R1: {data.rz_r1:.5f}\n"
-                                f"Volume: {data.volume}"
+                                f"**-------------Signal Rejected - {data.symbol} ({position_type})-------------**\n"
+                                f"```\n"
+                                f"{'Field':<13} | {'Value':<11} | {'Field':<13} | {'Value':<11} | {'Field':<13} | {'Value':<11} | {'Field':<13} | {'Value':<11}\n"
+                                f"{'-'*13}-+-{'-'*11}-+-{'-'*13}-+-{'-'*11}-+-{'-'*13}-+-{'-'*11}-+-{'-'*13}-+-{'-'*11}\n"
+                                f"{'Score':<13} | {f'{signal_score}/100':<11} | {'Stop Loss':<13} | {f'{data.sl1:.5f}':<11} | {'Smart Trail':<13} | {f'{data.smart_trail:.5f}':<11} | {'RZ S1':<13} | {f'{data.rz_s1:.5f}':<11}\n"
+                                f"{'Alert':<13} | {alert_short:<11} | {'Open Price':<13} | {f'{data.open_price:.5f}':<11} | {'Neo Lead':<13} | {f'{data.neo_lead:.5f}':<11} | {'RZ R1':<13} | {f'{data.rz_r1:.5f}':<11}\n"
+                                f"{'Close Price':<13} | {f'{data.close_price:.5f}':<11} | {'Trend Tracer':<13} | {f'{data.trend_tracer:.5f}':<11} | {'Neo Lag':<13} | {f'{data.neo_lag:.5f}':<11} | {'Volume':<13} | {f'{data.volume}':<11}\n"
+                                f"{'Threshold':<13} | {f'{SIGNAL_SCORE_THRESHOLD}':<11} | {'':<13} | {'':<11} | {'':<13} | {'':<11} | {'':<13} | {'':<11}\n"
+                                f"```\n"
                             )
                             _send_discord_notification(discord_msg)
                             logger.info("Signal conditions not met, closing all positions for safety")
@@ -325,23 +323,16 @@ class TradingSignalProcessor:
                                 leverage=LEVERAGE
                             )
                             discord_msg = (
-                                f"-------------------------START POSITION---------------------------------\n"
-                                f"**Order Started - {data.symbol} ({position_type})**\n"
-                                f"Score: {signal_score}/100\n"
-                                f"Alert: {data.alert}\n"
-                                f"Close Price: {data.close_price:.5f}\n"
-                                f"Take Profit: {data.tp2:.5f}\n"
-                                f"Stop Loss: {data.sl1:.5f}\n"
-                                f"Open Price: {data.open_price:.5f}\n"
-                                f"Trend Tracer: {data.trend_tracer:.5f}\n"
-                                f"Smart Trail: {data.smart_trail:.5f}\n"
-                                f"Neo Lead: {data.neo_lead:.5f}\n"
-                                f"Neo Lag: {data.neo_lag:.5f}\n"
-                                f"RZ S1: {data.rz_s1:.5f}\n"
-                                f"RZ R1: {data.rz_r1:.5f}\n"
-                                f"Volume: {data.volume}\n"
-                                f"Leverage: {LEVERAGE}x\n"
-                                f"Investment %: {INVESTMENT_PERCENTAGE}"
+                                f"**-------------Order Started - {data.symbol} ({position_type})-------------**\n"
+                                f"```\n"
+                                f"{'Field':<13} | {'Value':<11} | {'Field':<13} | {'Value':<11} | {'Field':<13} | {'Value':<11} | {'Field':<13} | {'Value':<11}\n"
+                                f"{'-'*13}-+-{'-'*11}-+-{'-'*13}-+-{'-'*11}-+-{'-'*13}-+-{'-'*11}-+-{'-'*13}-+-{'-'*11}\n"
+                                f"{'Score':<13} | {f'{signal_score}/100':<11} | {'Stop Loss':<13} | {f'{data.sl1:.5f}':<11} | {'Smart Trail':<13} | {f'{data.smart_trail:.5f}':<11} | {'RZ S1':<13} | {f'{data.rz_s1:.5f}':<11}\n"
+                                f"{'Alert':<13} | {alert_short:<11} | {'Open Price':<13} | {f'{data.open_price:.5f}':<11} | {'Neo Lead':<13} | {f'{data.neo_lead:.5f}':<11} | {'RZ R1':<13} | {f'{data.rz_r1:.5f}':<11}\n"
+                                f"{'Close Price':<13} | {f'{data.close_price:.5f}':<11} | {'Trend Tracer':<13} | {f'{data.trend_tracer:.5f}':<11} | {'Neo Lag':<13} | {f'{data.neo_lag:.5f}':<11} | {'Volume':<13} | {f'{data.volume}':<11}\n"
+                                f"{'Take Profit':<13} | {f'{data.tp2:.5f}':<11} | {'':<13} | {'':<11} | {'':<13} | {'':<11} | {'Leverage':<13} | {f'{LEVERAGE}x':<11}\n"
+                                f"{'':<13} | {'':<11} | {'':<13} | {'':<11} | {'':<13} | {'':<11} | {'Investment %':<13} | {f'{INVESTMENT_PERCENTAGE}':<11}\n"
+                                f"```\n"
                             )
                             _send_discord_notification(discord_msg)
                             if result.get("status") == "error":
