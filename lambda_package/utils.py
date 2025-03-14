@@ -3,6 +3,8 @@ from typing import Dict
 
 import pandas as pd
 from binance.um_futures import UMFutures
+from config import (DISCORD_WEBHOOK_URL)
+from discord_webhook import DiscordWebhook
 
 root = logging.getLogger()
 if root.handlers:
@@ -14,6 +16,18 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(filename)s:%(funcName)s - %(levelname)s - %(message)s'
 )
+
+def _send_discord_notification(message: str):
+    """Send a message to Discord via webhook."""
+    try:
+        webhook = DiscordWebhook(url=DISCORD_WEBHOOK_URL, content=message)
+        response = webhook.execute()
+        if response.status_code == 204:
+            logger.info("Discord notification sent successfully")
+        else:
+            logger.error(f"Failed to send Discord notification: {response.status_code} - {response.text}")
+    except Exception as e:
+        logger.error(f"Error sending Discord notification: {str(e)}")
 
 
 def calculate_macd(client: UMFutures,

@@ -1,13 +1,13 @@
 import logging
 from typing import Optional, Dict
-from discord_webhook import DiscordWebhook
 
 from binance.error import ClientError
 from binance.um_futures import UMFutures
 from binance_trade_wrapper import get_binance_client, place_order, place_market_order, get_exchange_info, \
     get_rounded_price
 from config import (INVESTMENT_PERCENTAGE, MAX_LOSS_PERCENTAGE, LEVERAGE, RISK_REWARD_RATIO,
-                    TRANSACTION_FEE_RATE, DISCORD_WEBHOOK_URL)
+                    TRANSACTION_FEE_RATE)
+from utils import _send_discord_notification
 from price_calculation_processor import (get_current_balance_in_usdt, calculate_sl_tp_prices,
                                          calculate_params_with_sl_tp_without_invest_percentage)
 
@@ -211,20 +211,6 @@ def _calculate_pnl(client: UMFutures, symbol: str, position_type: str, exit_pric
         logger.error(f"Error calculating PNL: {str(e)}")
         return {"pnl": 0.0, "investment": 0.0, "pnl_percent_investment": 0.0, "pnl_percent_balance": 0.0}
 
-
-def _send_discord_notification(message: str):
-    """Send a message to Discord via webhook."""
-    try:
-        webhook = DiscordWebhook(url=DISCORD_WEBHOOK_URL, content=message)
-        response = webhook.execute()
-        if response.status_code == 204:
-            logger.info("Discord notification sent successfully")
-        else:
-            logger.error(f"Failed to send Discord notification: {response.status_code} - {response.text}")
-    except Exception as e:
-        logger.error(f"Error sending Discord notification: {str(e)}")
-
-
 def close_position(client: UMFutures, symbol: str, position_type: str, leverage: int):
     logger.info(f"START: close_position - {position_type} for {symbol}")
     try:
@@ -252,7 +238,7 @@ def close_position(client: UMFutures, symbol: str, position_type: str, leverage:
 
         if pnl_data["pnl"] != 0 and pnl_data['investment'] != 0:
             # Send Discord notification
-            discord_msg = ( f"----------------------------------------------------------\n"
+            discord_msg = ( f"-------------------------CLOSE POSITION---------------------------------\n"
                            f"Position Closed - {symbol} ({position_type})\n"
                            f"PNL: {pnl_data['pnl']:.2f} USDT\n"
                            f"Investment: {pnl_data['investment']:.2f} USDT\n"

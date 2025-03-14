@@ -2,10 +2,11 @@ import json
 import logging
 from typing import Optional, Tuple
 
-from algorithm import calculate_macd
+from utils import calculate_macd
 from binance_trade_wrapper import get_binance_client
 from order_processor import handle_order_logic
 from config import INVESTMENT_PERCENTAGE, LEVERAGE, MACD_DELTA_RATIO, ENABLE_MACD_CHECK, SIGNAL_SCORE_THRESHOLD
+from utils import _send_discord_notification
 
 # Configure logging
 logging.basicConfig(
@@ -293,6 +294,22 @@ class TradingSignalProcessor:
                         if signal_score < SIGNAL_SCORE_THRESHOLD:  # Adjustable threshold
                             message = f"Signal rejected - Score {signal_score}/100 too low"
                             logger.info(message)
+                            discord_msg = (
+                                f"-------------------------REJECT POSITION---------------------------------\n"
+                                f"**Signal Rejected - {data.symbol} ({position_type})**\n"
+                                f"Reason: Score {signal_score}/100 < Threshold {SIGNAL_SCORE_THRESHOLD}\n"
+                                f"Alert: {data.alert}\n"
+                                f"Close Price: {data.close_price:.5f}\n"
+                                f"Open Price: {data.open_price:.5f}\n"
+                                f"Trend Tracer: {data.trend_tracer:.5f}\n"
+                                f"Smart Trail: {data.smart_trail:.5f}\n"
+                                f"Neo Lead: {data.neo_lead:.5f}\n"
+                                f"Neo Lag: {data.neo_lag:.5f}\n"
+                                f"RZ S1: {data.rz_s1:.5f}\n"
+                                f"RZ R1: {data.rz_r1:.5f}\n"
+                                f"Volume: {data.volume}"
+                            )
+                            _send_discord_notification(discord_msg)
                         else:
                             result = handle_order_logic(
                                 f"open_{position_type.lower()}_sl_tp_without_investment",
@@ -302,6 +319,26 @@ class TradingSignalProcessor:
                                 investment_percentage=INVESTMENT_PERCENTAGE,
                                 leverage=LEVERAGE
                             )
+                            discord_msg = (
+                                f"-------------------------START POSITION---------------------------------\n"
+                                f"**Order Started - {data.symbol} ({position_type})**\n"
+                                f"Score: {signal_score}/100\n"
+                                f"Alert: {data.alert}\n"
+                                f"Close Price: {data.close_price:.5f}\n"
+                                f"Take Profit: {data.tp2:.5f}\n"
+                                f"Stop Loss: {data.sl1:.5f}\n"
+                                f"Open Price: {data.open_price:.5f}\n"
+                                f"Trend Tracer: {data.trend_tracer:.5f}\n"
+                                f"Smart Trail: {data.smart_trail:.5f}\n"
+                                f"Neo Lead: {data.neo_lead:.5f}\n"
+                                f"Neo Lag: {data.neo_lag:.5f}\n"
+                                f"RZ S1: {data.rz_s1:.5f}\n"
+                                f"RZ R1: {data.rz_r1:.5f}\n"
+                                f"Volume: {data.volume}\n"
+                                f"Leverage: {LEVERAGE}x\n"
+                                f"Investment %: {INVESTMENT_PERCENTAGE}"
+                            )
+                            _send_discord_notification(discord_msg)
                             if result.get("status") == "error":
                                 message = f"{position_type} SETUP - Failed: {result.get('message', 'Unknown error')}"
                                 logger.error(message)

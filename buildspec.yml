@@ -19,7 +19,7 @@ phases:
       - cp ./lambda_package/lambda_function.py ./deploy/
       - cp ./lambda_package/order_processor.py ./deploy/
       - cp ./lambda_package/price_calculation_processor.py ./deploy/
-      - cp ./lambda_package/algorithm.py ./deploy/
+      - cp ./lambda_package/utils.py ./deploy/
       - cd deploy
       - find . -name "*.pyc" -delete
       - find . -name "__pycache__" -type d -exec rm -r {} +
