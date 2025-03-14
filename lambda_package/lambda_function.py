@@ -5,7 +5,7 @@ from typing import Optional, Tuple
 from algorithm import calculate_macd
 from binance_trade_wrapper import get_binance_client
 from order_processor import handle_order_logic
-from config import INVESTMENT_PERCENTAGE, LEVERAGE, MACD_DELTA_RATIO, ENABLE_MACD_CHECK
+from config import INVESTMENT_PERCENTAGE, LEVERAGE, MACD_DELTA_RATIO, ENABLE_MACD_CHECK, SIGNAL_SCORE_THRESHOLD
 
 # Configure logging
 logging.basicConfig(
@@ -18,8 +18,7 @@ logger = logging.getLogger(__name__)
 class SignalData:
     """Class to store parsed signal data as attributes."""
 
-    def __init__(self, data: dict):  # Changed parameter name to 'data' for clarity
-        # Symbol data
+    def __init__(self, data: dict):
         self.alert = data.get('alert', '')
         self.symbol = data.get('ticker', '')
         self.exchange = data.get('exchange', '')
@@ -32,7 +31,6 @@ class SignalData:
         self.month = data.get('month', '')
         self.day = data.get('day', '')
 
-        # OHLCV data
         ohlcv = data.get('ohlcv', {})
         self.open_price = float(ohlcv.get('open', 0)) if ohlcv.get('open') is not None else 0.0
         self.high_price = float(ohlcv.get('high', 0)) if ohlcv.get('high') is not None else 0.0
@@ -40,7 +38,6 @@ class SignalData:
         self.close_price = float(ohlcv.get('close', 0)) if ohlcv.get('close') is not None else 0.0
         self.volume = float(ohlcv.get('volume', 0)) if ohlcv.get('volume') is not None else 0.0
 
-        # Indicators
         indicators = data.get('indicators', {})
         self.smart_trail = float(indicators.get('smart_trail', 0)) if indicators.get(
             'smart_trail') is not None else None
@@ -50,8 +47,8 @@ class SignalData:
         self.rz_s1 = float(indicators.get('rz_s1', 0)) if indicators.get('rz_s1') is not None else None
         self.rz_s2 = float(indicators.get('rz_s2', 0)) if indicators.get('rz_s2') is not None else None
         self.rz_s3 = float(indicators.get('rz_s3', 0)) if indicators.get('rz_s3') is not None else None
-        self.catcher = float(indicators.get('catcher', 0)) if indicators.get('catcher') is not None else None
-        self.tracer = float(indicators.get('tracer', 0)) if indicators.get('tracer') is not None else None
+        self.trend_catcher = float(indicators.get('catcher', 0)) if indicators.get('catcher') is not None else None
+        self.trend_tracer = float(indicators.get('tracer', 0)) if indicators.get('tracer') is not None else None
         self.neo_lead = float(indicators.get('neo_lead', 0)) if indicators.get('neo_lead') is not None else None
         self.neo_lag = float(indicators.get('neo_lag', 0)) if indicators.get('neo_lag') is not None else None
         self.tp1 = float(indicators.get('tp1', 0)) if indicators.get('tp1') is not None else None
@@ -188,6 +185,66 @@ class TradingSignalProcessor:
                     f"Ratio Condition Met: {ratio_condition_met}")
         return swing or ratio_condition_met
 
+    def score_signal(self, data: SignalData, position_type: str) -> int:
+        """Score the signal quality from 0 to 100 based on available data."""
+        score = 0
+        close = data.close_price
+        open_price = data.open_price
+        volume = data.volume
+
+        # 1. Trend Tracer Alignment (30 points)
+        if data.trend_tracer is not None:
+            if position_type == "LONG" and close > data.trend_tracer:
+                score += 30
+            elif position_type == "SHORT" and close < data.trend_tracer:
+                score += 30
+            elif abs((close - data.trend_tracer) / data.trend_tracer) <= 0.005:  # Within 0.5%
+                score += 15
+
+        # 2. Trend Strength Approximation (25 points)
+        if data.smart_trail is not None and data.neo_lead is not None and data.neo_lag is not None:
+            trail_distance = abs((close - data.smart_trail) / data.smart_trail)
+            neo_trend = data.neo_lead > data.neo_lag if position_type == "LONG" else data.neo_lead < data.neo_lag
+            if trail_distance > 0.01 and neo_trend:  # >1% from smart_trail
+                score += 25
+            elif trail_distance > 0 and neo_trend:
+                score += 15
+            elif trail_distance <= 0.005:  # Within 0.5%
+                score += 5
+
+        # 3. Smart Trail Confluence (20 points)
+        if data.smart_trail is not None:
+            if position_type == "LONG" and close > data.smart_trail:
+                score += 20
+            elif position_type == "SHORT" and close < data.smart_trail:
+                score += 20
+            elif abs((close - data.smart_trail) / data.smart_trail) <= 0.005:  # Within 0.5%
+                score += 10
+
+        # 4. Reversal Zones Confluence (15 points)
+        if position_type == "LONG" and data.rz_s1 is not None:
+            if abs((close - data.rz_s1) / data.rz_s1) <= 0.005:
+                score += 15
+            elif abs((close - data.rz_s1) / data.rz_s1) <= 0.01:
+                score += 8
+        elif position_type == "SHORT" and data.rz_r1 is not None:
+            if abs((close - data.rz_r1) / data.rz_r1) <= 0.005:
+                score += 15
+            elif abs((close - data.rz_r1) / data.rz_r1) <= 0.01:
+                score += 8
+
+        # 5. Price Action Strength (10 points)
+        if position_type == "LONG" and close > open_price:
+            score += 5
+            if volume > 0:  # Basic volume check
+                score += 5
+        elif position_type == "SHORT" and close < open_price:
+            score += 5
+            if volume > 0:
+                score += 5
+
+        logger.info(f"Signal Score for {data.symbol} ({position_type}): {score}/100")
+        return min(score, 100)  # Cap at 100
     def process_signal(self, data: SignalData) -> dict:
         """Process the trading signal and return response."""
         logger.info("START: process_signal")
@@ -196,6 +253,8 @@ class TradingSignalProcessor:
         position_type, signal_type, value = self.detect_position_type(data.alert)
         logger.info(f"Received Signal - Alert: {data.alert}, Symbol: {data.symbol}, Position: {position_type}, "
                     f"Signal Type: {signal_type}, Price: {data.close_price}, TP1: {data.tp1}, SL1: {data.sl1}")
+        signal_score = self.score_signal(data, position_type)
+        logger.info(f"Signal Score: {signal_score}/100")
 
         if signal_type == "position_trigger":
             existing_position = self._check_existing_position(data.symbol, position_type)
@@ -231,17 +290,21 @@ class TradingSignalProcessor:
                         message = f"{position_type} SETUP - Failed to clear existing orders: {clear_result.get('message', 'Unknown error')}"
                         logger.error(message)
                     else:
-                        result = handle_order_logic(
-                            f"open_{position_type.lower()}_sl_tp_without_investment",
-                            data.symbol,
-                            stop_loss_price=data.sl1,
-                            take_profit_price=data.tp2,
-                            investment_percentage=INVESTMENT_PERCENTAGE,
-                            leverage=LEVERAGE
-                        )
-                        if result.get("status") == "error":
-                            message = f"{position_type} SETUP - Failed: {result.get('message', 'Unknown error')}"
-                            logger.error(message)
+                        if signal_score < SIGNAL_SCORE_THRESHOLD:  # Adjustable threshold
+                            message = f"Signal rejected - Score {signal_score}/100 too low"
+                            logger.info(message)
+                        else:
+                            result = handle_order_logic(
+                                f"open_{position_type.lower()}_sl_tp_without_investment",
+                                data.symbol,
+                                stop_loss_price=data.sl1,
+                                take_profit_price=data.tp2,
+                                investment_percentage=INVESTMENT_PERCENTAGE,
+                                leverage=LEVERAGE
+                            )
+                            if result.get("status") == "error":
+                                message = f"{position_type} SETUP - Failed: {result.get('message', 'Unknown error')}"
+                                logger.error(message)
                 else:
                     logger.info("MACD conditions not met, closing all positions for safety")
                     message = "CLOSE ALL POSITIONS - Safety Triggered"
@@ -281,7 +344,8 @@ class TradingSignalProcessor:
                     "position_type": position_type,
                     "close_price": data.close_price,
                     "take_profit": data.tp2,
-                    "stop_loss": data.sl1
+                    "stop_loss": data.sl1,
+                    "signal_score": signal_score if signal_type == "position_trigger" else None
                 }
             }
         }

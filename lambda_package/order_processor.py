@@ -4,7 +4,8 @@ from discord_webhook import DiscordWebhook
 
 from binance.error import ClientError
 from binance.um_futures import UMFutures
-from binance_trade_wrapper import get_binance_client, place_order, place_market_order, get_exchange_info, get_rounded_price
+from binance_trade_wrapper import get_binance_client, place_order, place_market_order, get_exchange_info, \
+    get_rounded_price
 from config import (INVESTMENT_PERCENTAGE, MAX_LOSS_PERCENTAGE, LEVERAGE, RISK_REWARD_RATIO,
                     TRANSACTION_FEE_RATE, DISCORD_WEBHOOK_URL)
 from price_calculation_processor import (get_current_balance_in_usdt, calculate_sl_tp_prices,
@@ -16,6 +17,7 @@ logging.basicConfig(
     format='%(filename)s:%(funcName)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
 
 def handle_order_logic(action: str, symbol: str, position_type: Optional[str] = None,
                        stop_loss_price: Optional[float] = None, take_profit_price: Optional[float] = None,
@@ -91,6 +93,7 @@ def handle_order_logic(action: str, symbol: str, position_type: Optional[str] = 
         logger.error(f"Unhandled Exception: {str(e)}")
         return {"status": "error", "message": str(e)}
 
+
 def place_stop_loss_order(client: UMFutures, symbol: str, position_type: str, stop_loss_price: float, quantity: float):
     logger.info(f"START: place_stop_loss_order - symbol: {symbol}, position_type: {position_type}")
     try:
@@ -104,7 +107,9 @@ def place_stop_loss_order(client: UMFutures, symbol: str, position_type: str, st
         logger.error(f"ClientError in stop-loss: {error.error_message}")
         return None
 
-def place_take_profit_order(client: UMFutures, symbol: str, position_type: str, take_profit_price: float, quantity: float):
+
+def place_take_profit_order(client: UMFutures, symbol: str, position_type: str, take_profit_price: float,
+                            quantity: float):
     logger.info(f"START: place_take_profit_order - symbol: {symbol}, position_type: {position_type}")
     try:
         side = "SELL" if position_type == "LONG" else "BUY"
@@ -116,6 +121,7 @@ def place_take_profit_order(client: UMFutures, symbol: str, position_type: str, 
     except ClientError as error:
         logger.error(f"ClientError in take-profit: {error.error_message}")
         return None
+
 
 def create_order_with_sl_tp(client: UMFutures, symbol: str, position_type: str, stop_loss_price: float,
                             take_profit_price: float, quantity: float, investment_amount: float,
@@ -156,11 +162,13 @@ def create_order_with_sl_tp(client: UMFutures, symbol: str, position_type: str, 
         logger.error(f"Unexpected error: {str(e)}")
         return {"status": "error", "message": str(e)}
 
+
 def _calculate_pnl(client: UMFutures, symbol: str, position_type: str, exit_price: float, quantity: float) -> Dict:
     """Calculate PNL including fees and percentages."""
     try:
         position_info = client.get_position_risk(symbol=symbol)
-        position = next((pos for pos in position_info if pos["symbol"] == symbol and float(pos["positionAmt"]) != 0), None)
+        position = next((pos for pos in position_info if pos["symbol"] == symbol and float(pos["positionAmt"]) != 0),
+                        None)
         if not position:
             logger.warning(f"No active position found for {symbol}")
             return {"pnl": 0.0, "investment": 0.0, "pnl_percent_investment": 0.0, "pnl_percent_balance": 0.0}
@@ -203,6 +211,7 @@ def _calculate_pnl(client: UMFutures, symbol: str, position_type: str, exit_pric
         logger.error(f"Error calculating PNL: {str(e)}")
         return {"pnl": 0.0, "investment": 0.0, "pnl_percent_investment": 0.0, "pnl_percent_balance": 0.0}
 
+
 def _send_discord_notification(message: str):
     """Send a message to Discord via webhook."""
     try:
@@ -214,6 +223,7 @@ def _send_discord_notification(message: str):
             logger.error(f"Failed to send Discord notification: {response.status_code} - {response.text}")
     except Exception as e:
         logger.error(f"Error sending Discord notification: {str(e)}")
+
 
 def close_position(client: UMFutures, symbol: str, position_type: str, leverage: int):
     logger.info(f"START: close_position - {position_type} for {symbol}")
@@ -240,13 +250,15 @@ def close_position(client: UMFutures, symbol: str, position_type: str, leverage:
         # Calculate PNL
         pnl_data = _calculate_pnl(client, symbol, position_type, current_price, position_qty)
 
-        # Send Discord notification
-        discord_msg = (f"Position Closed - {symbol} ({position_type})\n"
-                       f"PNL: {pnl_data['pnl']:.2f} USDT\n"
-                       f"Investment: {pnl_data['investment']:.2f} USDT\n"
-                       f"% Investment: {pnl_data['pnl_percent_investment']:.2f}%\n"
-                       f"% Total Balance: {pnl_data['pnl_percent_balance']:.2f}%")
-        _send_discord_notification(discord_msg)
+        if pnl_data["pnl"] != 0 and pnl_data['investment'] != 0:
+            # Send Discord notification
+            discord_msg = ( f"----------------------------------------------------------\n"
+                           f"Position Closed - {symbol} ({position_type})\n"
+                           f"PNL: {pnl_data['pnl']:.2f} USDT\n"
+                           f"Investment: {pnl_data['investment']:.2f} USDT\n"
+                           f"% Investment: {pnl_data['pnl_percent_investment']:.2f}%\n"
+                           f"% Total Balance: {pnl_data['pnl_percent_balance']:.2f}%")
+            _send_discord_notification(discord_msg)
 
         logger.info(f"Close order placed: {close_order}")
         return {
@@ -265,6 +277,7 @@ def close_position(client: UMFutures, symbol: str, position_type: str, leverage:
         logger.error(f"Unexpected error while closing position: {str(e)}")
         return {"status": "error", "message": str(e)}
 
+
 def clear_all_symbol_orders(client: UMFutures, symbol: str):
     logger.info(f"START: clear_all_symbol_orders - symbol: {symbol}")
     try:
@@ -275,11 +288,13 @@ def clear_all_symbol_orders(client: UMFutures, symbol: str):
         logger.error(f"Failed to cancel orders: {str(e)}")
         return False
 
+
 def take_profit_partially(client: UMFutures, symbol: str, leverage: int) -> Dict:
     logger.info(f"START: take_profit_partially - symbol: {symbol}")
     try:
         position_info = client.get_position_risk(symbol=symbol)
-        position = next((pos for pos in position_info if pos["symbol"] == symbol and float(pos["positionAmt"]) != 0), None)
+        position = next((pos for pos in position_info if pos["symbol"] == symbol and float(pos["positionAmt"]) != 0),
+                        None)
 
         if not position:
             logger.info(f"No open position found for {symbol}")
