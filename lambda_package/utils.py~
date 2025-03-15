@@ -3,8 +3,7 @@ from typing import Dict, Tuple
 
 import pandas as pd
 from binance.um_futures import UMFutures
-from config import INVESTMENT_PERCENTAGE, LEVERAGE, ENABLE_MACD_CHECK, \
-    SIGNAL_SCORE_THRESHOLD, DISCORD_WEBHOOK_URL, MACD_DELTA_RATIO  # Ensure LEVERAGE is imported
+from config import (DISCORD_WEBHOOK_URL, ENABLE_MACD_CHECK, MACD_DELTA_RATIO)
 from discord_webhook import DiscordWebhook
 from models import SignalData, Position
 

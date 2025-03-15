@@ -2,7 +2,7 @@ import logging
 
 from binance.error import ClientError
 from binance.um_futures import UMFutures
-from binance_trade_wrapper import get_exchange_info
+from binance_trade_wrapper import get_exchange_info, get_rounded_price
 from config import ORDER_MAX_LIMIT_PERCENTAGE, INVESTMENT_PERCENTAGE, LEVERAGE
 
 root = logging.getLogger()
@@ -29,12 +29,9 @@ def get_current_balance_in_usdt(client: UMFutures) -> float:
     except ClientError as error:
         logging.error(f"ClientError - {error.error_message}")
         return 0.0
-
-
 def calculate_sl_tp_prices(client: UMFutures, symbol: str, position_type: str,
                            investment_percentage: float, max_loss_percentage: float,
                            risk_reward_ratio: str, leverage: float) -> dict:
-    """Calculate SL/TP prices based on total balance with a max limit."""
     logging.info("START: calculate_sl_tp_prices")
     logging.info(f"Parameters - symbol: {symbol}, position_type: {position_type}, "
                  f"investment_percentage: {investment_percentage}, "
@@ -50,7 +47,7 @@ def calculate_sl_tp_prices(client: UMFutures, symbol: str, position_type: str,
         price_precision, quantity_precision = get_exchange_info(client, symbol)
 
         total_balance = get_current_balance_in_usdt(client)
-        max_investment_amount = total_balance * (ORDER_MAX_LIMIT_PERCENTAGE / 100)  # Cap at ORDER_MAX_LIMIT_PERCENTAGE
+        max_investment_amount = total_balance * (ORDER_MAX_LIMIT_PERCENTAGE / 100)
         investment_amount = min(total_balance * (investment_percentage / 100), max_investment_amount)
         position_value = investment_amount * leverage
 
@@ -67,8 +64,8 @@ def calculate_sl_tp_prices(client: UMFutures, symbol: str, position_type: str,
             stop_loss_price = market_price + price_diff
             take_profit_price = market_price - (price_diff * rr_multiplier)
 
-        stop_loss_price = round(stop_loss_price, price_precision)
-        take_profit_price = round(take_profit_price, price_precision)
+        stop_loss_price = get_rounded_price(client, symbol, stop_loss_price)
+        take_profit_price = get_rounded_price(client, symbol, take_profit_price)
 
         sl_pnl = quantity * abs(market_price - stop_loss_price) * (-1 if position_type == "LONG" else 1)
         tp_pnl = quantity * abs(market_price - take_profit_price) * (1 if position_type == "LONG" else -1)
@@ -99,11 +96,9 @@ def calculate_sl_tp_prices(client: UMFutures, symbol: str, position_type: str,
         logging.error(f"Error calculating SL/TP prices: {str(e)}")
         return {"status": "error", "message": str(e)}
 
-
 def calculate_params_with_sl_tp_without_invest_percentage(client: UMFutures, symbol: str, position_type: str,
                                                           stop_loss_price: float, take_profit_price: float,
                                                           investment_percentage: float, leverage: float) -> dict:
-    """Calculate position parameters using total balance with a max limit and provided SL/TP."""
     logging.info("START: calculate_params_with_sl_tp_without_invest_percentage")
     logging.info(f"Parameters - symbol: {symbol}, position_type: {position_type}, "
                  f"stop_loss_price: {stop_loss_price}, take_profit_price: {take_profit_price}, "
@@ -115,22 +110,17 @@ def calculate_params_with_sl_tp_without_invest_percentage(client: UMFutures, sym
         price_precision, quantity_precision = get_exchange_info(client, symbol)
 
         total_balance = get_current_balance_in_usdt(client)
-        max_investment_amount = total_balance * (ORDER_MAX_LIMIT_PERCENTAGE / 100)  # Cap at ORDER_MAX_LIMIT_PERCENTAGE
+        max_investment_amount = total_balance * (ORDER_MAX_LIMIT_PERCENTAGE / 100)
         investment_amount = min(total_balance * (investment_percentage / 100), max_investment_amount)
         position_value = investment_amount * leverage
 
-        # Calculate quantity based on position value and market price
         quantity = round(position_value / market_price, quantity_precision)
+        stop_loss_price = get_rounded_price(client, symbol, stop_loss_price)
+        take_profit_price = get_rounded_price(client, symbol, take_profit_price)
 
-        # Round provided SL/TP prices to match precision
-        stop_loss_price = round(stop_loss_price, price_precision)
-        take_profit_price = round(take_profit_price, price_precision)
-
-        # Calculate PNL for validation
         sl_pnl = quantity * abs(market_price - stop_loss_price) * (-1 if position_type == "LONG" else 1)
         tp_pnl = quantity * abs(market_price - take_profit_price) * (1 if position_type == "LONG" else -1)
 
-        # Validate that investment respects the max limit
         if investment_amount > max_investment_amount:
             logging.warning(
                 f"Investment amount {investment_amount} exceeds max limit {max_investment_amount}. Capping it.")

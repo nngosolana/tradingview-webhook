@@ -7,9 +7,10 @@ from binance_trade_wrapper import get_binance_client, place_order, place_market_
     get_rounded_price
 from config import (INVESTMENT_PERCENTAGE, MAX_LOSS_PERCENTAGE, LEVERAGE, RISK_REWARD_RATIO,
                     TRANSACTION_FEE_RATE)
-from utils import _send_discord_notification
+from models import Position
 from price_calculation_processor import (get_current_balance_in_usdt, calculate_sl_tp_prices,
                                          calculate_params_with_sl_tp_without_invest_percentage)
+from utils import _send_discord_notification
 
 # Configure logging
 logging.basicConfig(
@@ -19,11 +20,30 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def update_new_sl_tp(exists_position, symbol, position_type, stop_loss_price, take_profit_price):
+    clear_result = handle_order_logic("clear_orders", symbol)
+    if clear_result is not True:
+        message = f"{position_type} SETUP - Failed to clear orders: {clear_result.get('message', 'Unknown error')}"
+        logger.error(message)
+    else:
+        quantity = abs(float(exists_position["positionAmt"]))
+        sl_result = handle_order_logic("place_stop_loss", symbol, position_type=position_type,
+                                       stop_loss_price=stop_loss_price, quantity=quantity)
+        tp_result = handle_order_logic("place_take_profit", symbol, position_type=position_type,
+                                       take_profit_price=take_profit_price, quantity=quantity)
+        if sl_result.get("status") == "error" or tp_result.get("status") == "error":
+            message = f"{position_type} SETUP - Failed to update SL/TP: {sl_result.get('message', '')} {tp_result.get('message', '')}"
+            logger.error(message)
+        else:
+            message = f"{position_type} SETUP - SL/TP Updated Successfully "
+            logger.info(message)
+    return exists_position
+
 def handle_order_logic(action: str, symbol: str, position_type: Optional[str] = None,
                        stop_loss_price: Optional[float] = None, take_profit_price: Optional[float] = None,
                        quantity: Optional[float] = None, investment_percentage: Optional[float] = None,
-                       leverage: Optional[int] = LEVERAGE) -> Dict:
-    """Handle order logic with direct parameters."""
+                       leverage: Optional[int] = LEVERAGE, exists_position: Position = None,
+                       signal_type: Optional[str] = None) -> Dict:
     logger.info(f"START: handle_order_logic - Action: {action}, Symbol: {symbol}")
     try:
         client = get_binance_client()
@@ -69,7 +89,8 @@ def handle_order_logic(action: str, symbol: str, position_type: Optional[str] = 
                 result[pos_type] = close_position(client, symbol, pos_type, leverage)
                 logger.info(f"Close {pos_type}: {result[pos_type]}")
         elif action == "take_profit_partially":
-            result = take_profit_partially(client, symbol, leverage)
+            result = take_profit_partially(client, symbol, leverage, original_take_profit=take_profit_price,
+                                           signal_type=signal_type)
         elif action == "clear_orders":
             result = clear_all_symbol_orders(client, symbol)
         elif action == "place_stop_loss":
@@ -84,6 +105,8 @@ def handle_order_logic(action: str, symbol: str, position_type: Optional[str] = 
                 result = {"status": "error", "message": "Failed to place take profit"}
             else:
                 result = {"status": "success", "take_profit_order": result}
+        elif action == "update_new_sl_tp":
+            result = update_new_sl_tp(exists_position, symbol, position_type, stop_loss_price, take_profit_price)
         else:
             result = {"status": "error", "message": "Invalid action"}
 
@@ -275,10 +298,11 @@ def clear_all_symbol_orders(client: UMFutures, symbol: str):
         logger.error(f"Failed to cancel orders: {str(e)}")
         return False
 
-
-def take_profit_partially(client: UMFutures, symbol: str, leverage: int) -> Dict:
-    logger.info(f"START: take_profit_partially - symbol: {symbol}")
+def take_profit_partially(client: UMFutures, symbol: str, leverage: int,
+                          original_take_profit: Optional[float] = None, signal_type: Optional[str] = None) -> Dict:
+    logger.info(f"START: take_profit_partially - symbol: {symbol}, signal_type: {signal_type}")
     try:
+        # Fetch current position info
         position_info = client.get_position_risk(symbol=symbol)
         position = next((pos for pos in position_info if pos["symbol"] == symbol and float(pos["positionAmt"]) != 0),
                         None)
@@ -291,13 +315,42 @@ def take_profit_partially(client: UMFutures, symbol: str, leverage: int) -> Dict
         entry_price = float(position["entryPrice"])
         position_qty = abs(float(position["positionAmt"]))
         position_type = "LONG" if float(position["positionAmt"]) > 0 else "SHORT"
+        position_update_time = int(position["updateTime"])
 
-        partial_qty = round(position_qty * 0.5, get_exchange_info(client, symbol)[1])
-        new_stop_loss = get_rounded_price(client, symbol, (entry_price + current_price) / 2)
-        take_profit_price = (current_price + abs(entry_price - current_price) * 20
-                             if position_type == "LONG"
-                             else current_price - abs(entry_price - current_price) * 20)
+        # Fetch all orders for the symbol
+        all_orders = client.get_all_orders(symbol=symbol)
+        logger.info(f"Fetched {len(all_orders)} orders for {symbol}")
 
+        # Filter for filled TAKE_PROFIT_MARKET orders after position creation, excluding full closes
+        filled_tp_orders = [
+            order for order in all_orders
+            if order["type"] == "TAKE_PROFIT_MARKET"
+               and order["status"] == "FILLED"
+               and int(order["time"]) > position_update_time
+               and float(order["origQty"]) < position_qty  # Partial TP has qty < full position
+        ]
+
+        # Skip only for tp_reach if prior partial TP exists
+        if signal_type == "tp_reach" and filled_tp_orders:
+            logger.info(f"Found {len(filled_tp_orders)} prior partial TAKE_PROFIT_MARKET orders for {symbol}. Skipping tp_reach.")
+            return {"status": "success", "message": "Partial take-profit already executed for tp_reach"}
+
+        # Calculate partial quantity (50% of position)
+        _, quantity_precision = get_exchange_info(client, symbol)
+        partial_qty = round(position_qty * 0.5, quantity_precision)
+        remaining_qty = position_qty - partial_qty
+
+        # Use original_take_profit from signal; fallback if not provided
+        original_tp_price = original_take_profit if original_take_profit else (
+            current_price * 1.02 if position_type == "LONG" else current_price * 0.98)
+        new_stop_loss = get_rounded_price(client, symbol, (entry_price + original_tp_price) / 2)
+
+        # New TP: Extend further (e.g., 20x distance from entry to current)
+        take_profit_price = get_rounded_price(client, symbol,
+                                              current_price + abs(entry_price - current_price) * 20 if position_type == "LONG"
+                                              else current_price - abs(entry_price - current_price) * 20)
+
+        # Place partial take-profit order
         side = "SELL" if position_type == "LONG" else "BUY"
         partial_order = place_market_order(client, symbol, side, leverage, quantity=partial_qty)
         if not partial_order:
@@ -310,17 +363,19 @@ def take_profit_partially(client: UMFutures, symbol: str, leverage: int) -> Dict
         # Send Discord notification
         discord_msg = (
             f"-------------------------TAKE PARTIALLY PROFIT POSITION---------------------------------\n"
-            f"Partial Take Profit - {symbol} ({position_type})\n"
+            f"Partial Take Profit - {symbol} ({position_type}) - Signal: {signal_type}\n"
             f"PNL: {pnl_data['pnl']:.2f} USDT\n"
             f"Investment: {pnl_data['investment']:.2f} USDT\n"
             f"% Investment: {pnl_data['pnl_percent_investment']:.2f}%\n"
-            f"% Total Balance: {pnl_data['pnl_percent_balance']:.2f}%")
+            f"% Total Balance: {pnl_data['pnl_percent_balance']:.2f}%\n"
+            f"New Stop Loss: {new_stop_loss:.5f}"
+        )
         _send_discord_notification(discord_msg)
 
+        # Clear existing orders and set new SL/TP
         if not clear_all_symbol_orders(client, symbol):
             logger.error(f"Failed to cancel existing orders for {symbol}")
 
-        remaining_qty = position_qty - partial_qty
         stop_loss_order = place_stop_loss_order(client, symbol, position_type, new_stop_loss, remaining_qty)
         take_profit_order = place_take_profit_order(client, symbol, position_type, take_profit_price, remaining_qty)
 

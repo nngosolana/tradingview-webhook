@@ -1,11 +1,12 @@
+import json
 import logging
 import os
-import boto3
-import json
 from decimal import Decimal
-from typing import Union, Optional, List
+from typing import Union, Optional
 
+import boto3
 from binance.um_futures import UMFutures
+from models import Position
 
 root = logging.getLogger()
 if root.handlers:
@@ -42,7 +43,6 @@ def get_binance_client():
     except Exception as e:
         logging.error(f"Failed to retrieve Binance API keys: {str(e)}")
         raise ValueError("Could not retrieve Binance API credentials.")
-
 
 
 def round_step_size(quantity: Union[float, Decimal], step_size: Union[float, Decimal]) -> float:
@@ -132,3 +132,51 @@ def place_market_order(client: UMFutures, symbol: str, side: str, leverage: int,
     except Exception as e:
         logging.error(f"Market order failed: {e}")
         return None
+def fetch_all_positions(client: UMFutures, symbol: str) -> list['Position']:
+    """
+    Fetch all existing positions for a given symbol and include position type.
+
+    Args:
+        symbol (str): The trading pair symbol (e.g., "XRPUSDT")
+
+    Returns:
+        list[Position]: List of Position objects
+    """
+    logging.info(f"Fetching all positions for {symbol}")
+    position_info = client.get_position_risk(symbol=symbol)
+    logging.info(f"Position info: {position_info}")
+
+    positions = []
+    for pos in position_info:
+        if pos["symbol"] == symbol and float(pos["positionAmt"]) != 0:
+            position_type = "LONG" if float(pos["positionAmt"]) > 0 else "SHORT"
+            position = Position(
+                symbol=pos["symbol"],
+                positionSide=pos["positionSide"],
+                positionAmt=pos["positionAmt"],
+                entryPrice=pos["entryPrice"],
+                breakEvenPrice=pos["breakEvenPrice"],
+                markPrice=pos["markPrice"],
+                unRealizedProfit=pos["unRealizedProfit"],
+                liquidationPrice=pos["liquidationPrice"],
+                isolatedMargin=pos["isolatedMargin"],
+                notional=pos["notional"],
+                marginAsset=pos["marginAsset"],
+                isolatedWallet=pos["isolatedWallet"],
+                initialMargin=pos["initialMargin"],
+                maintMargin=pos["maintMargin"],
+                positionInitialMargin=pos["positionInitialMargin"],
+                openOrderInitialMargin=pos["openOrderInitialMargin"],
+                adl=pos["adl"],
+                bidNotional=pos["bidNotional"],
+                askNotional=pos["askNotional"],
+                updateTime=pos["updateTime"],
+                position_type=position_type
+            )
+            positions.append(position)
+            logging.info(f"Found position: {position_type}, Quantity: {pos['positionAmt']}")
+
+    if not positions:
+        logging.info(f"No positions found for {symbol}")
+
+    return positions
