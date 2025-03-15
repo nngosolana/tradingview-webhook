@@ -286,9 +286,9 @@ def lambda_handler(event: dict, context: object) -> dict:
 def main():
     logger.info("START: main")
     test_input = {
-        "alert": "Bearish Exit",
+        "alert": "Bullish Exit",
         "interval": "1",
-        "ticker": "XRPUSDT",
+        "ticker": "LINKUSDT",
         "exchange": "BINANCE",
         "sector": "na",
         "market": "Crypto",

@@ -132,8 +132,6 @@ def place_market_order(client: UMFutures, symbol: str, side: str, leverage: int,
     except Exception as e:
         logging.error(f"Market order failed: {e}")
         return None
-
-
 def fetch_all_positions(client: UMFutures, symbol: str) -> list['Position']:
     """
     Fetch all existing positions for a given symbol and include position type.
