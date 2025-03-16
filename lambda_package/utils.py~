@@ -1,5 +1,6 @@
 import logging
 from typing import Dict, Tuple
+
 import pandas as pd
 from binance.um_futures import UMFutures
 from config import DISCORD_WEBHOOK_URL
@@ -12,6 +13,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
 def _send_discord_notification(message: str):
     try:
         webhook = DiscordWebhook(url=DISCORD_WEBHOOK_URL, content=message)
@@ -21,6 +23,7 @@ def _send_discord_notification(message: str):
     except Exception as e:
         logger.error(f"Error sending Discord notification: {str(e)}")
 
+
 def calculate_macd(client: UMFutures, interval_raw: str, limit: int, symbol: str,
                    fast_length: int = 18, slow_length: int = 39, signal_length: int = 15) -> Dict:
     try:
@@ -28,7 +31,8 @@ def calculate_macd(client: UMFutures, interval_raw: str, limit: int, symbol: str
         interval = interval_map.get(str(interval_raw), "1m")
         klines = client.klines(symbol=symbol, interval=interval, limit=limit)
         df = pd.DataFrame(klines, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume', 'close_time',
-                                           'quote_asset_volume', 'trades', 'taker_buy_base', 'taker_buy_quote', 'ignored'])
+                                           'quote_asset_volume', 'trades', 'taker_buy_base', 'taker_buy_quote',
+                                           'ignored'])
         df['close'] = pd.to_numeric(df['close'])
         ema_fast = df['close'].ewm(span=fast_length, adjust=False).mean()
         ema_slow = df['close'].ewm(span=slow_length, adjust=False).mean()
@@ -44,6 +48,7 @@ def calculate_macd(client: UMFutures, interval_raw: str, limit: int, symbol: str
     except Exception as e:
         logger.error(f"Error calculating MACD for {symbol}: {str(e)}")
         return {"macd": None, "signal": None, "histogram": None, "prev_histogram": None}
+
 
 def score_signal(client: UMFutures, data: SignalData, position_type: str) -> Tuple[int, dict]:
     scores = {

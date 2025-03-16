@@ -18,7 +18,7 @@ def _send_discord_notification(message: str):
     try:
         webhook = DiscordWebhook(url=DISCORD_WEBHOOK_URL, content=message)
         response = webhook.execute()
-        if response.status_code != 204:
+        if response.status_code > 204:
             logger.error(f"Failed to send Discord notification: {response.status_code} - {response.text}")
     except Exception as e:
         logger.error(f"Error sending Discord notification: {str(e)}")

@@ -4,9 +4,10 @@ import uuid
 from typing import Optional, Tuple
 
 from binance_trade_wrapper import get_binance_client, fetch_all_positions
-from config import INVESTMENT_PERCENTAGE, LEVERAGE, SIGNAL_SCORE_THRESHOLD
-from models import SignalData, Position
-from order_processor import handle_order_logic
+from config import INVESTMENT_PERCENTAGE, LEVERAGE
+from models import SignalData
+from order_processor import create_order_with_sl_tp, close_position, take_profit_partially, place_stop_loss_order
+from price_calculation_processor import calculate_params_with_sl_tp_without_invest_percentage
 from utils import _send_discord_notification, score_signal
 
 logging.basicConfig(
@@ -35,7 +36,7 @@ class TradingSignalProcessor:
             logger.error(f"Failed to parse event: {str(e)}")
             raise
 
-    def detect_position_type(self, alert: str) -> Tuple[Optional[str], str]:
+    def detect_position_type(self, alert: str, tp1: float, tp2: float) -> Tuple[Optional[str], str]:
         logger.info(f"START: detect_position_type - Alert: {alert}")
         position_type = None
         signal_type = None
@@ -54,22 +55,23 @@ class TradingSignalProcessor:
             signal_type = "exit"
         elif "TP1" in alert and "Reached" in alert:
             signal_type = "tp1_reach"
-            position_type = "LONG" if "Bullish" in alert else "SHORT"
+            position_type = "SHORT" if tp1 > tp2 else "LONG"
         elif "TP2" in alert and "Reached" in alert:
             signal_type = "tp2_reach"
-            position_type = "LONG" if "Bullish" in alert else "SHORT"
+            position_type = "SHORT" if tp1 > tp2 else "LONG"
         elif "SL1" in alert and "Reached" in alert or "SL2" in alert and "Reached" in alert:
             signal_type = "sl_reach"
-            position_type = "LONG" if "Bullish" in alert else "SHORT"
+            position_type = "LONG" if tp2 < tp1 else "SHORT"
 
         logger.info(f"Detected - Position: {position_type}, Signal Type: {signal_type}")
         return position_type, signal_type
 
     def calculate_new_tp(self, current_price: float, stop_loss_price: float, position_type: str,
                          risk_reward: float = 6.0) -> float:
+        distance = abs(current_price - stop_loss_price)
         if position_type == "LONG":
-            return current_price + risk_reward * (current_price - stop_loss_price)
-        return current_price - risk_reward * (stop_loss_price - current_price)
+            return current_price + risk_reward * distance
+        return current_price - risk_reward * distance
 
     def adjust_sl_for_exit(self, current_price: float, entry_price: float, current_sl: float,
                            position_type: str) -> float:
@@ -82,7 +84,7 @@ class TradingSignalProcessor:
 
     def process_signal(self, data: SignalData) -> dict:
         logger.info("START: process_signal")
-        position_type, signal_type = self.detect_position_type(data.alert)
+        position_type, signal_type = self.detect_position_type(data.alert, data.tp1, data.tp2)
         positions = fetch_all_positions(self.client, data.symbol)
         existing_position = next((pos for pos in positions if pos.position_type == position_type), None)
         opposite_position = next((pos for pos in positions if pos.position_type != position_type), None)
@@ -92,7 +94,7 @@ class TradingSignalProcessor:
 
         if signal_type == "confirmation":
             if opposite_position:
-                action_result = handle_order_logic("close_all_symbol_orders", data.symbol)
+                action_result = close_position(self.client, data.symbol, opposite_position.position_type, LEVERAGE)
                 message = f"Closed opposite {opposite_position.position_type} position"
             elif existing_position:
                 message = f"{position_type} position exists, no action taken"
@@ -106,49 +108,63 @@ class TradingSignalProcessor:
 
             if existing_position:
                 message = f"{position_type} position exists, ignoring TP1"
-            elif opposite_position:
-                action_result = handle_order_logic("close_all_symbol_orders", data.symbol)
-                if action_result.get("status") != "error":
-                    action_result = handle_order_logic(
-                        f"open_{position_type.lower()}_sl_tp_without_investment",
-                        data.symbol, position_type=position_type, stop_loss_price=data.sl2,
-                        take_profit_price=new_tp, investment_percentage=investment_adj, leverage=LEVERAGE
-                    )
-                    message = f"Closed {opposite_position.position_type}, opened {position_type}"
             else:
-                action_result = handle_order_logic(
-                    f"open_{position_type.lower()}_sl_tp_without_investment",
-                    data.symbol, position_type=position_type, stop_loss_price=data.sl2,
-                    take_profit_price=new_tp, investment_percentage=investment_adj, leverage=LEVERAGE
+                calc_result = calculate_params_with_sl_tp_without_invest_percentage(
+                    self.client, data.symbol, position_type, data.sl2, new_tp, investment_adj, LEVERAGE
                 )
-                message = f"Opened new {position_type} position"
+                if "status" in calc_result and calc_result["status"] == "error":
+                    logger.error(f"Calculation failed: {calc_result['message']}")
+                    action_result = calc_result
+                else:
+                    if opposite_position:
+                        action_result = close_position(self.client, data.symbol, opposite_position.position_type,
+                                                       LEVERAGE)
+                        if action_result.get("status") != "error":
+                            action_result = create_order_with_sl_tp(
+                                self.client, data.symbol, position_type, calc_result["stop_loss_price"],
+                                calc_result["take_profit_price"], calc_result["quantity"],
+                                calc_result["investment_amount"], calc_result["market_price"], LEVERAGE
+                            )
+                            message = f"Closed {opposite_position.position_type}, opened {position_type}"
+                    else:
+                        action_result = create_order_with_sl_tp(
+                            self.client, data.symbol, position_type, calc_result["stop_loss_price"],
+                            calc_result["take_profit_price"], calc_result["quantity"],
+                            calc_result["investment_amount"], calc_result["market_price"], LEVERAGE
+                        )
+                        message = f"Opened new {position_type} position"
 
         elif signal_type == "tp2_reach" and existing_position:
             new_tp = self.calculate_new_tp(data.close_price, data.sl1, position_type)
-            action_result = handle_order_logic(
-                "take_profit_partially", data.symbol, leverage=LEVERAGE,
-                take_profit_price=new_tp, quantity=float(existing_position.positionAmt) * 0.4
+            action_result = take_profit_partially(
+                self.client, data.symbol, LEVERAGE, new_tp, abs(float(existing_position.positionAmt) * 0.4)
             )
             if action_result.get("status") != "error":
-                action_result = handle_order_logic(
-                    "place_stop_loss", data.symbol, position_type=position_type,
-                    stop_loss_price=data.sl1, quantity=action_result["remaining_quantity"]
+                action_result = place_stop_loss_order(
+                    self.client, data.symbol, position_type, data.sl1, action_result["remaining_quantity"]
                 )
+                if action_result:
+                    action_result = {"status": "success", "stop_loss_order": action_result}
+                else:
+                    action_result = {"status": "error", "message": "Failed to place stop loss"}
                 message = f"Adjusted SL to SL1, new TP set for {position_type}"
 
         elif signal_type == "exit" and existing_position:
-            current_sl = float(existing_position.liquidationPrice)  # Assuming this as current SL
+            current_sl = float(data.sl1)  # Assuming this as current SL
             new_sl = self.adjust_sl_for_exit(data.close_price, float(existing_position.entryPrice), current_sl,
                                              position_type)
-            action_result = handle_order_logic(
-                "take_profit_partially", data.symbol, leverage=LEVERAGE,
-                take_profit_price=data.tp2, quantity=float(existing_position.positionAmt) * 0.4
+            new_tp = self.calculate_new_tp(data.close_price, new_sl, position_type)
+            action_result = take_profit_partially(
+                self.client, data.symbol, LEVERAGE, new_tp, abs(float(existing_position.positionAmt) * 0.4)
             )
             if action_result.get("status") != "error":
-                action_result = handle_order_logic(
-                    "place_stop_loss", data.symbol, position_type=position_type,
-                    stop_loss_price=new_sl, quantity=action_result["remaining_quantity"]
+                action_result = place_stop_loss_order(
+                    self.client, data.symbol, position_type, new_sl, action_result["remaining_quantity"]
                 )
+                if action_result:
+                    action_result = {"status": "success", "stop_loss_order": action_result}
+                else:
+                    action_result = {"status": "error", "message": "Failed to place stop loss"}
                 message = f"Partial TP (40%) taken, SL adjusted for {position_type}"
 
         elif signal_type == "sl_reach" and existing_position:

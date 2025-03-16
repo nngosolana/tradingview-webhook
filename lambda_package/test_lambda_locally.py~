@@ -101,7 +101,7 @@ def generate_sample_signals(symbol: str = "DOGEUSDT"):
             "tf": "1h",
             "ohlcv": base_ohlcv.copy(),
             "indicators": base_indicators.copy(),
-            "running": "False"  # Skip this signal
+            "running": "True"  # Skip this signal
         },
         # Bearish Confirmation
         {
@@ -128,7 +128,7 @@ def generate_sample_signals(symbol: str = "DOGEUSDT"):
             "tf": "1h",
             "ohlcv": base_ohlcv.copy(),
             "indicators": base_indicators.copy(),
-            "running": "True"  # Skip this signal
+            "running": "False"  # Skip this signal
         }
     ]
     return samples

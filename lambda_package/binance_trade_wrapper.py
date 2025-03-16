@@ -66,10 +66,16 @@ def get_exchange_info(client: UMFutures, symbol: str):
 
 
 def place_order(client: UMFutures, symbol: str, side: str, order_type: str, price: Optional[float] = None,
-                quantity: Optional[float] = None, close_position=False):
+                quantity: Optional[float] = None, close_position=False, reduce_only=False):
     logger.info(f"START: place_order - symbol: {symbol}, side: {side}, order_type: {order_type}")
     try:
-        order_params = {'symbol': symbol, 'side': side, 'type': order_type, 'closePosition': close_position}
+        order_params = {
+            'symbol': symbol,
+            'side': side,
+            'type': order_type,
+            'closePosition': close_position,
+            'reduceOnly': reduce_only
+        }
         if price:
             order_params['stopPrice'] = str(get_rounded_price(client, symbol, price))
         if quantity:
@@ -83,12 +89,13 @@ def place_order(client: UMFutures, symbol: str, side: str, order_type: str, pric
         return None
 
 
-def place_market_order(client: UMFutures, symbol: str, side: str, leverage: int, quantity: Optional[float] = None):
+def place_market_order(client: UMFutures, symbol: str, side: str, leverage: int, quantity: Optional[float] = None,
+                       reduce_only=False):
     logger.info(f"START: place_market_order - symbol: {symbol}, side: {side}, leverage: {leverage}")
     try:
         _, quantity_precision = get_exchange_info(client, symbol)
         quantity = round(quantity, quantity_precision)
-        result = place_order(client, symbol, side, 'MARKET', quantity=quantity)
+        result = place_order(client, symbol, side, 'MARKET', quantity=quantity, reduce_only=reduce_only)
         logger.info(f"END: place_market_order - Result: {result}")
         return result
     except Exception as e:
