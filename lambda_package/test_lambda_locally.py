@@ -12,14 +12,14 @@ logger = logging.getLogger(__name__)
 
 def fetch_current_price(symbol: str = "DOGEUSDT") -> float:
     """Mock current price since we're fully mocking data."""
-    logger.debug(f"START: fetch_current_price - Input: symbol={symbol}")
+    logger.info(f"START: fetch_current_price - Input: symbol={symbol}")
     price = 0.17  # Mocked price instead of fetching from Binance
-    logger.debug(f"END: fetch_current_price - Output: price={price}")
+    logger.info(f"END: fetch_current_price - Output: price={price}")
     return price
 
 def generate_sample_signals(symbol: str = "DOGEUSDT"):
     """Generate sample signals with fully mocked data for testing."""
-    logger.debug(f"START: generate_sample_signals - Input: symbol={symbol}")
+    logger.info(f"START: generate_sample_signals - Input: symbol={symbol}")
     current_price = fetch_current_price(symbol)
 
     # Base OHLCV (mocked for realistic price action)
@@ -90,7 +90,7 @@ def generate_sample_signals(symbol: str = "DOGEUSDT"):
             "tf": "1h",
             "ohlcv": base_ohlcv.copy(),
             "indicators": short_indicators_tp1.copy(),
-            "running": "False"  # Process this signal
+            "running": "True"  # Process this signal
         },
         # TP2 Reach (Short)
         {
@@ -108,7 +108,7 @@ def generate_sample_signals(symbol: str = "DOGEUSDT"):
             "tf": "1h",
             "ohlcv": base_ohlcv.copy(),
             "indicators": long_indicators_tp1.copy(),
-            "running": "True"  # Process this signal
+            "running": "False"  # Process this signal
         },
         # TP2 Reach (Long)
         {
@@ -156,15 +156,15 @@ def generate_sample_signals(symbol: str = "DOGEUSDT"):
             "running": "False"  # Skip this signal
         }
     ]
-    logger.debug(f"END: generate_sample_signals - Output: samples={[s['alert'] for s in samples]}")
+    logger.info(f"END: generate_sample_signals - Output: samples={[s['alert'] for s in samples]}")
     return samples
 
 def test_lambda_locally():
     """Run local tests for Lambda handler with sample signals."""
-    logger.debug("START: test_lambda_locally")
+    logger.info("START: test_lambda_locally")
 
     # Generate sample signals
-    sample_signals = generate_sample_signals("DOGEUSDT")
+    sample_signals = generate_sample_signals("TONUSDT")
 
     # Simulate Lambda execution for each sample
     for sample in sample_signals:
@@ -181,7 +181,7 @@ def test_lambda_locally():
         else:
             logger.info(f"Skipping signal: {sample['alert']}")
 
-    logger.debug("END: test_lambda_locally")
+    logger.info("END: test_lambda_locally")
 
 if __name__ == "__main__":
     test_lambda_locally()

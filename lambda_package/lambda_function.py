@@ -13,7 +13,7 @@ from utils import _send_discord_notification, score_signal
 
 # Set logging to DEBUG level
 logging.basicConfig(
-    level=logging.DEBUG,  # Changed to DEBUG
+    level=logging.DEBUG,
     format='%(filename)s:%(funcName)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
@@ -73,7 +73,8 @@ class TradingSignalProcessor:
     def calculate_new_tp(self, current_price: float, stop_loss_price: float, position_type: str,
                          risk_reward: float = 6.0) -> float:
         logger.debug(
-            f"START: calculate_new_tp - Input: current_price={current_price}, stop_loss_price={stop_loss_price}, position_type={position_type}, risk_reward={risk_reward}")
+            f"START: calculate_new_tp - Input: current_price={current_price}, stop_loss_price={stop_loss_price}, "
+            f"position_type={position_type}, risk_reward={risk_reward}")
         distance = abs(current_price - stop_loss_price)
         if position_type == "LONG":
             new_tp = current_price + risk_reward * distance
@@ -84,8 +85,8 @@ class TradingSignalProcessor:
 
     def adjust_sl_for_exit(self, current_price: float, entry_price: float, current_sl: float,
                            position_type: str) -> float:
-        logger.debug(
-            f"START: adjust_sl_for_exit - Input: current_price={current_price}, entry_price={entry_price}, current_sl={current_sl}, position_type={position_type}")
+        logger.debug(f"START: adjust_sl_for_exit - Input: current_price={current_price}, entry_price={entry_price}, "
+                     f"current_sl={current_sl}, position_type={position_type}")
         mid_point = (current_price + entry_price) / 2
         if position_type == "LONG":
             new_sl = max(current_sl, mid_point)
@@ -183,8 +184,8 @@ class TradingSignalProcessor:
             message = f"Will take 40% profit and adjust SL/TP for {position_type}"
 
         elif signal_type == "sl_reach" and existing_position:
-            message = f"SL reached for {position_type}, handled externally"
-
+            message = f"SL reached for {position_type}, closing position"
+            actions["close_opposite"] = True  # Treat as closing the position
 
         # Step 2: Execute all actions
         result = {"status": "success", "details": {}}
@@ -192,8 +193,11 @@ class TradingSignalProcessor:
         logger.info(f"Actions: {actions}")
 
         if actions["close_opposite"]:
-            logger.info(f"ACTION: Closing opposite position: {opposite_position.position_type}")
-            close_result = close_position(self.client, data.symbol, opposite_position.position_type, LEVERAGE)
+            logger.info(
+                f"ACTION: Closing opposite position: {opposite_position.position_type if opposite_position else position_type}")
+            close_result = close_position(self.client, data.symbol,
+                                          opposite_position.position_type if opposite_position else position_type,
+                                          LEVERAGE)
             if close_result.get("status") == "error":
                 return {"statusCode": 500, "body": json.dumps({"error": close_result["message"]})}
             result["details"]["close_opposite"] = close_result
@@ -240,17 +244,25 @@ class TradingSignalProcessor:
                 return {"statusCode": 500, "body": json.dumps({"error": update_result["message"]})}
             result["details"]["update_sl_tp"] = update_result
 
-        # Step 3: Summarize and notify
+        # Step 3: Summarize and notify with PNL
+        pnl_info = "N/A"
+        if "close_opposite" in result["details"]:
+            pnl = result["details"]["close_opposite"]["pnl"]
+            pnl_info = f"{pnl:.4f} USDT ({result['details']['close_opposite']['pnl_percent_investment']:.2f}%)"
+        elif "take_partial_profit" in result["details"]:
+            pnl = result["details"]["take_partial_profit"]["pnl"]
+            pnl_info = f"{pnl:.4f} USDT ({result['details']['take_partial_profit']['pnl_percent_investment']:.2f}%)"
+
         discord_table = (
             f"**Signal Processed - {data.symbol} ({signal_type}) [UUID: {signal_uuid}]**\n"
             f"```\n"
-            f"{'Field':<15} | {'Value':<15} | {'Field':<15} | {'Value':<15}\n"
-            f"{'-' * 15}+{'-' * 15}+{'-' * 15}+{'-' * 15}\n"
-            f"{'Position':<15} | {position_type or 'N/A':<15} | {'Message':<15} | {message:<15}\n"
-            f"{'Close Price':<15} | {data.close_price:<15.5f} | {'TP1':<15} | {data.tp1:<15.5f}\n"
-            f"{'SL1':<15} | {data.sl1:<15.5f} | {'TP2':<15} | {data.tp2:<15.5f}\n"
-            f"{'SL2':<15} | {data.sl2:<15.5f} | {'Score':<15} | {locals().get('signal_score', 'N/A'):<15}\n"
-            f"{'Actions':<15} | {', '.join([k for k, v in actions.items() if v]):<15} | {'Status':<15} | {'Success':<15}\n"
+            f"{'Field':<15} | {'Value':<20} | {'Field':<15} | {'Value':<20}\n"
+            f"{'-' * 15}+{'-' * 20}+{'-' * 15}+{'-' * 20}\n"
+            f"{'Position':<15} | {position_type or 'N/A':<20} | {'Message':<15} | {message:<20}\n"
+            f"{'Close Price':<15} | {data.close_price:<20.5f} | {'TP1':<15} | {data.tp1 or 0:<20.5f}\n"
+            f"{'SL1':<15} | {data.sl1 or 0:<20.5f} | {'TP2':<15} | {data.tp2 or 0:<20.5f}\n"
+            f"{'SL2':<15} | {data.sl2 or 0:<20.5f} | {'Score':<15} | {locals().get('signal_score', 'N/A'):<20}\n"
+            f"{'Actions':<15} | {', '.join([k for k, v in actions.items() if v]) or 'None':<20} | {'PNL':<15} | {pnl_info:<20}\n"
             f"```\n"
         )
         _send_discord_notification(discord_table)
