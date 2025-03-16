@@ -8,8 +8,7 @@ class SignalData:
         self.close_price = float(ohlcv.get('close', 0)) if ohlcv.get('close') is not None else 0.0
         self.volume = float(ohlcv.get('volume', 0)) if ohlcv.get('volume') is not None else 0.0
         indicators = data.get('indicators', {})
-        self.smart_trail = float(indicators.get('smart_trail', 0)) if indicators.get(
-            'smart_trail') is not None else None
+        self.smart_trail = float(indicators.get('smart_trail', 0)) if indicators.get('smart_trail') is not None else None
         self.rz_r1 = float(indicators.get('rz_r1', 0)) if indicators.get('rz_r1') is not None else None
         self.rz_s1 = float(indicators.get('rz_s1', 0)) if indicators.get('rz_s1') is not None else None
         self.trend_tracer = float(indicators.get('tracer', 0)) if indicators.get('tracer') is not None else None
@@ -20,12 +19,10 @@ class SignalData:
         self.tp2 = float(indicators.get('tp2', 0)) if indicators.get('tp2') is not None else None
         self.sl2 = float(indicators.get('sl2', 0)) if indicators.get('sl2') is not None else None
 
-
 class Position:
     def __init__(self, symbol: str, positionSide: str, positionAmt: str, entryPrice: str, breakEvenPrice: str,
                  markPrice: str, unRealizedProfit: str, liquidationPrice: str, isolatedMargin: str, notional: str,
-                 marginAsset: str, isolatedWallet: str, initialMargin: str, maintMargin: str,
-                 positionInitialMargin: str,
+                 marginAsset: str, isolatedWallet: str, initialMargin: str, maintMargin: str, positionInitialMargin: str,
                  openOrderInitialMargin: str, adl: int, bidNotional: str, askNotional: str, updateTime: int,
                  position_type: str):
         self.symbol = symbol
