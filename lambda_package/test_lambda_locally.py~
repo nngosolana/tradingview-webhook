@@ -90,7 +90,7 @@ def generate_sample_signals(symbol: str = "DOGEUSDT"):
             "tf": "1h",
             "ohlcv": base_ohlcv.copy(),
             "indicators": short_indicators_tp1.copy(),
-            "running": "True"  # Process this signal
+            "running": "False"  # Process this signal
         },
         # TP2 Reach (Short)
         {
@@ -153,7 +153,7 @@ def generate_sample_signals(symbol: str = "DOGEUSDT"):
             "tf": "1h",
             "ohlcv": base_ohlcv.copy(),
             "indicators": base_indicators.copy(),
-            "running": "False"  # Skip this signal
+            "running": "True"  # Skip this signal
         }
     ]
     logger.debug(f"END: generate_sample_signals - Output: samples={[s['alert'] for s in samples]}")

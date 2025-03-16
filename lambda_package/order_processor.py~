@@ -204,11 +204,6 @@ def update_sl_tp_orders(client: UMFutures, symbol: str, position_type: str, stop
                  f"stop_loss_price={stop_loss_price}, take_profit_price={take_profit_price}, quantity={quantity}")
     try:
 
-        # Step 2: Check trading mode (Hedge or One-Way)
-        account_info = client.account()
-        is_hedge_mode = account_info.get("dualSidePosition", False)  # True if Hedge Mode, False if One-Way
-        logger.debug(f"Trading mode detected: {'Hedge' if is_hedge_mode else 'One-Way'}")
-
         # Step 3: Determine the side based on position type
         side = "SELL" if position_type == "LONG" else "BUY"
 
@@ -218,20 +213,17 @@ def update_sl_tp_orders(client: UMFutures, symbol: str, position_type: str, stop
             "side": side,
             "type": "STOP_MARKET",
             "stopPrice": str(stop_loss_price),
-            "quantity": str(quantity)
+            "quantity": str(quantity),
+            "closePosition": "True"
         }
         take_profit_params = {
             "symbol": symbol,
             "side": side,
             "type": "TAKE_PROFIT_MARKET",
             "stopPrice": str(take_profit_price),
-            "quantity": str(quantity)
+            "quantity": str(quantity),
+            "closePosition": "True"
         }
-
-        # Step 5: Add positionSide only if in Hedge Mode
-        if is_hedge_mode:
-            stop_loss_params["positionSide"] = position_type
-            take_profit_params["positionSide"] = position_type
 
         # Step 6: Place Stop Loss order
         stop_loss_order = client.new_order(**stop_loss_params)
