@@ -5,60 +5,67 @@ from lambda_package.lambda_function import lambda_handler
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,  # Keeping DEBUG level for detailed logging
     format='%(filename)s:%(funcName)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-
 def fetch_current_price(symbol: str = "DOGEUSDT") -> float:
     """Mock current price since we're fully mocking data."""
-    logger.info(f"Mocking current price for {symbol}: 0.17")
-    return 0.17  # Mocked price instead of fetching from Binance
-
+    logger.debug(f"START: fetch_current_price - Input: symbol={symbol}")
+    price = 0.17  # Mocked price instead of fetching from Binance
+    logger.debug(f"END: fetch_current_price - Output: price={price}")
+    return price
 
 def generate_sample_signals(symbol: str = "DOGEUSDT"):
     """Generate sample signals with fully mocked data for testing."""
+    logger.debug(f"START: generate_sample_signals - Input: symbol={symbol}")
     current_price = fetch_current_price(symbol)
 
     # Base OHLCV (mocked for realistic price action)
     base_ohlcv = {
-        "open": current_price * 1.005,  # 0.5% above current (0.17085)
-        "close": current_price,  # 0.17
-        "volume": 1000000.0  # High volume for Price Action score
+        "open": current_price * 1.005,  # 0.17085 (+0.5%)
+        "close": current_price,         # 0.17
+        "volume": 1000000.0            # High volume for Price Action score
     }
 
     # TP1 Reach (Short: TP1 > TP2)
     tp1_short = current_price * 0.99  # 0.1683
     tp2_short = current_price * 0.97  # 0.1649
-    short_indicators = {
+    short_indicators_tp1 = {
         "tp1": tp1_short,
         "sl1": current_price * 1.02,  # 0.1734
         "tp2": tp2_short,
         "sl2": current_price * 1.04,  # 0.1768
         "trend_tracer": current_price * 1.01,  # 0.1717 (above close for Short: no score)
         "smart_trail": current_price * 0.98,  # 0.1666 (below close for Short: +20)
-        "neo_lead": current_price * 0.99,  # 0.1683
-        "neo_lag": current_price * 1.01,  # 0.1717 (neo_lead < neo_lag: +15)
-        "rz_r1": current_price * 1.001,  # 0.17017 (close within 1%: +10)
-        "rz_s1": current_price * 0.95  # 0.1615 (not relevant for Short)
+        "neo_lead": current_price * 0.99,     # 0.1683
+        "neo_lag": current_price * 1.01,      # 0.1717 (neo_lead < neo_lag: +15)
+        "rz_r1": current_price * 1.001,       # 0.17017 (close within 1%: +10)
+        "rz_s1": current_price * 0.95         # 0.1615 (not relevant for Short)
     }
 
-    # TP2 Reach (Long: TP2 < TP1)
+    # TP2 Reach (Short: TP1 > TP2)
+    short_indicators_tp2 = short_indicators_tp1.copy()  # Same indicators, different alert
+
+    # TP1 Reach (Long: TP2 < TP1)
     tp1_long = current_price * 1.01  # 0.1717
     tp2_long = current_price * 0.98  # 0.1666
-    long_indicators = {
+    long_indicators_tp1 = {
         "tp1": tp1_long,
         "sl1": current_price * 1.02,  # 0.1734
         "tp2": tp2_long,
         "sl2": current_price * 1.04,  # 0.1768
         "trend_tracer": current_price * 0.99,  # 0.1683 (below close for Long: +15)
         "smart_trail": current_price * 1.02,  # 0.1734 (above close for Long: +20)
-        "neo_lead": current_price * 1.01,  # 0.1717
-        "neo_lag": current_price * 0.99,  # 0.1683 (neo_lead > neo_lag: +15)
-        "rz_r1": current_price * 1.05,  # 0.1785 (not relevant for Long)
-        "rz_s1": current_price * 0.999  # 0.16983 (close within 1%: +10)
+        "neo_lead": current_price * 1.01,     # 0.1717
+        "neo_lag": current_price * 0.99,      # 0.1683 (neo_lead > neo_lag: +15)
+        "rz_r1": current_price * 1.05,        # 0.1785 (not relevant for Long)
+        "rz_s1": current_price * 0.999        # 0.16983 (close within 1%: +10)
     }
+
+    # TP2 Reach (Long: TP2 < TP1)
+    long_indicators_tp2 = long_indicators_tp1.copy()  # Same indicators, different alert
 
     # Base indicators for Confirmation/Exit (mocked for consistency)
     base_indicators = {
@@ -68,13 +75,13 @@ def generate_sample_signals(symbol: str = "DOGEUSDT"):
         "sl2": current_price * 1.04,  # 0.1768
         "trend_tracer": current_price * 0.99,  # 0.1683
         "smart_trail": current_price * 1.02,  # 0.1734
-        "neo_lead": current_price * 1.01,  # 0.1717
-        "neo_lag": current_price * 0.99,  # 0.1683
-        "rz_r1": current_price * 1.05,  # 0.1785
-        "rz_s1": current_price * 0.95  # 0.1615
+        "neo_lead": current_price * 1.01,     # 0.1717
+        "neo_lag": current_price * 0.99,      # 0.1683
+        "rz_r1": current_price * 1.05,        # 0.1785
+        "rz_s1": current_price * 0.95         # 0.1615
     }
 
-    # Sample signals
+    # Sample signals (all included)
     samples = [
         # TP1 Reach (Short)
         {
@@ -82,7 +89,25 @@ def generate_sample_signals(symbol: str = "DOGEUSDT"):
             "ticker": symbol,
             "tf": "1h",
             "ohlcv": base_ohlcv.copy(),
-            "indicators": short_indicators.copy(),
+            "indicators": short_indicators_tp1.copy(),
+            "running": "True"  # Process this signal
+        },
+        # TP2 Reach (Short)
+        {
+            "alert": f"TP2 {tp2_short} Reached",
+            "ticker": symbol,
+            "tf": "1h",
+            "ohlcv": base_ohlcv.copy(),
+            "indicators": short_indicators_tp2.copy(),
+            "running": "False"  # Process this signal
+        },
+        # TP1 Reach (Long)
+        {
+            "alert": f"TP1 {tp1_long} Reached",
+            "ticker": symbol,
+            "tf": "1h",
+            "ohlcv": base_ohlcv.copy(),
+            "indicators": long_indicators_tp1.copy(),
             "running": "False"  # Process this signal
         },
         # TP2 Reach (Long)
@@ -91,8 +116,8 @@ def generate_sample_signals(symbol: str = "DOGEUSDT"):
             "ticker": symbol,
             "tf": "1h",
             "ohlcv": base_ohlcv.copy(),
-            "indicators": long_indicators.copy(),
-            "running": "False"  # Skip this signal
+            "indicators": long_indicators_tp2.copy(),
+            "running": "False"  # Process this signal
         },
         # Bullish Confirmation
         {
@@ -101,7 +126,7 @@ def generate_sample_signals(symbol: str = "DOGEUSDT"):
             "tf": "1h",
             "ohlcv": base_ohlcv.copy(),
             "indicators": base_indicators.copy(),
-            "running": "True"  # Skip this signal
+            "running": "False"  # Skip this signal
         },
         # Bearish Confirmation
         {
@@ -131,15 +156,15 @@ def generate_sample_signals(symbol: str = "DOGEUSDT"):
             "running": "False"  # Skip this signal
         }
     ]
+    logger.debug(f"END: generate_sample_signals - Output: samples={[s['alert'] for s in samples]}")
     return samples
-
 
 def test_lambda_locally():
     """Run local tests for Lambda handler with sample signals."""
-    logger.info("START: test_lambda_locally")
+    logger.debug("START: test_lambda_locally")
 
     # Generate sample signals
-    sample_signals = generate_sample_signals()
+    sample_signals = generate_sample_signals("DOGEUSDT")
 
     # Simulate Lambda execution for each sample
     for sample in sample_signals:
@@ -156,6 +181,7 @@ def test_lambda_locally():
         else:
             logger.info(f"Skipping signal: {sample['alert']}")
 
+    logger.debug("END: test_lambda_locally")
 
 if __name__ == "__main__":
     test_lambda_locally()

@@ -7,175 +7,255 @@ from binance_trade_wrapper import place_order, place_market_order
 from config import TRANSACTION_FEE_RATE
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,  # Changed to DEBUG
     format='%(filename)s:%(funcName)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-def place_stop_loss_order(client: UMFutures, symbol: str, position_type: str, stop_loss_price: float, quantity: float):
-    logger.info(f"START: place_stop_loss_order - symbol: {symbol}, position_type: {position_type}")
+
+def place_stop_loss_order(client: UMFutures, symbol: str, position_type: str, stop_loss_price: float,
+                          quantity: float) -> Dict:
+    logger.debug(
+        f"START: place_stop_loss_order - Input: client={client}, symbol={symbol}, position_type={position_type}, stop_loss_price={stop_loss_price}, quantity={quantity}")
     try:
         side = "SELL" if position_type == "LONG" else "BUY"
         stop_loss_order = place_order(client, symbol, side, "STOP_MARKET",
                                       price=stop_loss_price, quantity=quantity, reduce_only=True)
-        logger.info(f"Stop loss order placed: {stop_loss_order}")
-        return stop_loss_order
+        if not stop_loss_order:
+            result = {"status": "error", "message": "Failed to place stop loss order"}
+        else:
+            result = {"status": "success", "stop_loss_order": stop_loss_order}
+        logger.debug(f"END: place_stop_loss_order - Output: result={result}")
+        return result
     except ClientError as error:
         logger.error(f"ClientError in stop-loss: {error.error_message}")
-        return None
+        result = {"status": "error", "message": error.error_message}
+        logger.debug(f"END: place_stop_loss_order - Output (error): result={result}")
+        return result
 
-def create_order_with_sl_tp(client: UMFutures, symbol: str, position_type: str, stop_loss_price: float,
-                            take_profit_price: float, quantity: float, investment_amount: float,
-                            market_price: float, leverage: int):
-    logger.info(f"START: create_order_with_sl_tp - symbol: {symbol}, position_type: {position_type}")
+
+def create_position_order(client: UMFutures, symbol: str, position_type: str, stop_loss_price: float,
+                          take_profit_price: float, quantity: float, investment_amount: float,
+                          market_price: float, leverage: int) -> Dict:
+    logger.debug(
+        f"START: create_order_with_sl_tp - Input: client={client}, symbol={symbol}, position_type={position_type}, stop_loss_price={stop_loss_price}, take_profit_price={take_profit_price}, quantity={quantity}, investment_amount={investment_amount}, market_price={market_price}, leverage={leverage}")
     try:
-        if not clear_all_symbol_orders(client, symbol):
-            logger.error(f"Failed to cancel existing orders for {symbol}")
 
         client.change_leverage(symbol=symbol, leverage=leverage)
         side = "BUY" if position_type == "LONG" else "SELL"
         order = place_market_order(client, symbol, side, leverage, quantity=quantity)
         if not order:
-            logger.error("Order placement failed")
-            return {"status": "error", "message": "Order placement failed"}
-
-        stop_loss_order = place_stop_loss_order(client, symbol, position_type, stop_loss_price, quantity)
-        take_profit_order = place_order(client, symbol, "SELL" if position_type == "LONG" else "BUY",
-                                        "TAKE_PROFIT_MARKET", price=take_profit_price, quantity=quantity,
-                                        close_position=True)
-
-        result = {
-            "status": "success",
-            "order": order,
-            "stop_loss_order": stop_loss_order,
-            "take_profit_order": take_profit_order,
-            "trade_amount": investment_amount,
-            "quantity": quantity,
-            "calculated_sl": stop_loss_price,
-            "calculated_tp": take_profit_price,
-            "market_price": market_price
-        }
-        logger.info(f"Position opened successfully: {result}")
+            result = {"status": "error", "message": "Order placement failed"}
+        else:
+            result = {
+                "status": "success",
+                "order": order,
+                "trade_amount": investment_amount,
+                "quantity": quantity,
+                "market_price": market_price
+            }
+        logger.debug(f"END: create_order_with_sl_tp - Output: result={result}")
         return result
     except Exception as e:
         logger.error(f"Unexpected error: {str(e)}")
-        return {"status": "error", "message": str(e)}
+        result = {"status": "error", "message": str(e)}
+        logger.debug(f"END: create_order_with_sl_tp - Output (error): result={result}")
+        return result
+
 
 def _calculate_pnl(client: UMFutures, symbol: str, position_type: str, exit_price: float, quantity: float) -> Dict:
+    logger.debug(
+        f"START: _calculate_pnl - Input: client={client}, symbol={symbol}, position_type={position_type}, exit_price={exit_price}, quantity={quantity}")
     try:
         position_info = client.get_position_risk(symbol=symbol)
         position = next((pos for pos in position_info if pos["symbol"] == symbol and float(pos["positionAmt"]) != 0),
                         None)
         if not position:
             logger.warning(f"No active position found for {symbol}")
-            return {"pnl": 0.0, "investment": 0.0, "pnl_percent_investment": 0.0, "pnl_percent_balance": 0.0}
-
-        entry_price = float(position["entryPrice"])
-        direction = 1 if position_type == "LONG" else -1
-        raw_pnl = (exit_price - entry_price) * quantity * direction
-        total_fees = (entry_price + exit_price) * quantity * TRANSACTION_FEE_RATE
-        net_pnl = raw_pnl - total_fees
-        investment = float(position["positionInitialMargin"])
-        total_balance = float(client.account()["totalWalletBalance"])
-        pnl_percent_investment = (net_pnl / investment) * 100 if investment > 0 else 0.0
-        pnl_percent_balance = (net_pnl / total_balance) * 100 if total_balance > 0 else 0.0
-
-        return {
-            "pnl": net_pnl,
-            "investment": investment,
-            "pnl_percent_investment": pnl_percent_investment,
-            "pnl_percent_balance": pnl_percent_balance
-        }
+            result = {"pnl": 0.0, "investment": 0.0, "pnl_percent_investment": 0.0, "pnl_percent_balance": 0.0}
+        else:
+            entry_price = float(position["entryPrice"])
+            direction = 1 if position_type == "LONG" else -1
+            raw_pnl = (exit_price - entry_price) * quantity * direction
+            total_fees = (entry_price + exit_price) * quantity * TRANSACTION_FEE_RATE
+            net_pnl = raw_pnl - total_fees
+            investment = float(position["positionInitialMargin"])
+            total_balance = float(client.account()["totalWalletBalance"])
+            pnl_percent_investment = (net_pnl / investment) * 100 if investment > 0 else 0.0
+            pnl_percent_balance = (net_pnl / total_balance) * 100 if total_balance > 0 else 0.0
+            result = {
+                "pnl": net_pnl,
+                "investment": investment,
+                "pnl_percent_investment": pnl_percent_investment,
+                "pnl_percent_balance": pnl_percent_balance
+            }
+        logger.debug(f"END: _calculate_pnl - Output: result={result}")
+        return result
     except Exception as e:
         logger.error(f"Error calculating PNL: {str(e)}")
-        return {"pnl": 0.0, "investment": 0.0, "pnl_percent_investment": 0.0, "pnl_percent_balance": 0.0}
+        result = {"pnl": 0.0, "investment": 0.0, "pnl_percent_investment": 0.0, "pnl_percent_balance": 0.0}
+        logger.debug(f"END: _calculate_pnl - Output (error): result={result}")
+        return result
 
-def close_position(client: UMFutures, symbol: str, position_type: str, leverage: int):
-    logger.info(f"START: close_position - {position_type} for {symbol}")
+
+def close_position(client: UMFutures, symbol: str, position_type: str, leverage: int) -> Dict:
+    logger.debug(
+        f"START: close_position - Input: client={client}, symbol={symbol}, position_type={position_type}, leverage={leverage}")
     try:
-        if not clear_all_symbol_orders(client, symbol):
-            logger.error(f"Failed to cancel existing orders for {symbol}")
 
         position_info = client.get_position_risk(symbol=symbol)
         position = next((pos for pos in position_info if pos["symbol"] == symbol and float(pos["positionAmt"]) != 0),
                         None)
         if not position or float(position["positionAmt"]) == 0:
             logger.info(f"No open {position_type} position found for {symbol}")
-            return {"status": "success", "message": f"No open {position_type} position to close"}
-
-        position_qty = abs(float(position["positionAmt"]))
-        side = "SELL" if position_type == "LONG" else "BUY"
-        current_price = float(client.ticker_price(symbol=symbol)["price"])
-        close_order = place_market_order(client, symbol, side, leverage, quantity=position_qty)
-        if not close_order:
-            return {"status": "error", "message": "Failed to close position"}
-
-        pnl_data = _calculate_pnl(client, symbol, position_type, current_price, position_qty)
-        return {
-            "status": "success",
-            "close_order": close_order,
-            "closed_quantity": position_qty,
-            "pnl": pnl_data["pnl"],
-            "investment": pnl_data["investment"],
-            "pnl_percent_investment": pnl_data["pnl_percent_investment"],
-            "pnl_percent_balance": pnl_data["pnl_percent_balance"]
-        }
+            result = {"status": "success", "message": f"No open {position_type} position to close"}
+        else:
+            position_qty = abs(float(position["positionAmt"]))
+            side = "SELL" if position_type == "LONG" else "BUY"
+            current_price = float(client.ticker_price(symbol=symbol)["price"])
+            close_order = place_market_order(client, symbol, side, leverage, quantity=position_qty, reduce_only=True)
+            if not close_order:
+                result = {"status": "error", "message": "Failed to close position"}
+            else:
+                pnl_data = _calculate_pnl(client, symbol, position_type, current_price, position_qty)
+                result = {
+                    "status": "success",
+                    "close_order": close_order,
+                    "closed_quantity": position_qty,
+                    "pnl": pnl_data["pnl"],
+                    "investment": pnl_data["investment"],
+                    "pnl_percent_investment": pnl_data["pnl_percent_investment"],
+                    "pnl_percent_balance": pnl_data["pnl_percent_balance"]
+                }
+        logger.debug(f"END: close_position - Output: result={result}")
+        return result
     except Exception as e:
         logger.error(f"Error while closing position: {str(e)}")
-        return {"status": "error", "message": str(e)}
+        result = {"status": "error", "message": str(e)}
+        logger.debug(f"END: close_position - Output (error): result={result}")
+        return result
 
-def clear_all_symbol_orders(client: UMFutures, symbol: str):
-    logger.info(f"START: clear_all_symbol_orders - symbol: {symbol}")
+
+def clear_all_symbol_orders(client: UMFutures, symbol: str) -> bool:
+    logger.debug(f"START: clear_all_symbol_orders - Input: client={client}, symbol={symbol}")
     try:
         client.cancel_open_orders(symbol=symbol)
         logger.info("Open orders cancelled successfully")
-        return True
+        result = True
     except Exception as e:
         logger.error(f"Failed to cancel orders: {str(e)}")
-        return False
+        result = False
+    logger.debug(f"END: clear_all_symbol_orders - Output: result={result}")
+    return result
 
 
 def take_profit_partially(client: UMFutures, symbol: str, leverage: int, take_profit_price: float,
                           quantity: float) -> Dict:
-    logger.info(f"START: take_profit_partially - symbol: {symbol}")
+    logger.debug(
+        f"START: take_profit_partially - Input: client={client}, symbol={symbol}, leverage={leverage}, take_profit_price={take_profit_price}, quantity={quantity}")
     try:
         position_info = client.get_position_risk(symbol=symbol)
         position = next((pos for pos in position_info if pos["symbol"] == symbol and float(pos["positionAmt"]) != 0),
                         None)
         if not position:
-            return {"status": "error", "message": "No open position found"}
-
-        current_price = float(client.ticker_price(symbol=symbol)["price"])
-        position_type = "LONG" if float(position["positionAmt"]) > 0 else "SHORT"
-        partial_qty = quantity
-        remaining_qty = abs(float(position["positionAmt"])) - partial_qty
-
-        side = "SELL" if position_type == "LONG" else "BUY"
-        partial_order = place_market_order(client, symbol, side, leverage, quantity=partial_qty, reduce_only=True)
-        if not partial_order:
-            return {"status": "error", "message": "Partial profit order failed"}
-
-        pnl_data = _calculate_pnl(client, symbol, position_type, current_price, partial_qty)
-        if not clear_all_symbol_orders(client, symbol):
-            logger.error(f"Failed to cancel existing orders for {symbol}")
-
-        take_profit_order = place_order(client, symbol, side, "TAKE_PROFIT_MARKET",
-                                        price=take_profit_price, quantity=remaining_qty, reduce_only=True)
-
-        result = {
-            "status": "success",
-            "partial_order": partial_order,
-            "new_take_profit_order": take_profit_order,
-            "partial_quantity": partial_qty,
-            "remaining_quantity": remaining_qty,
-            "market_price": current_price,
-            "pnl": pnl_data["pnl"],
-            "investment": pnl_data["investment"],
-            "pnl_percent_investment": pnl_data["pnl_percent_investment"],
-            "pnl_percent_balance": pnl_data["pnl_percent_balance"]
-        }
-        logger.info(f"Partial profit taken successfully: {result}")
+            result = {"status": "error", "message": "No open position found"}
+        else:
+            current_price = float(client.ticker_price(symbol=symbol)["price"])
+            position_type = "LONG" if float(position["positionAmt"]) > 0 else "SHORT"
+            partial_qty = quantity
+            total_qty = abs(float(position["positionAmt"]))
+            if partial_qty > total_qty:
+                result = {"status": "error", "message": "Partial quantity exceeds position size"}
+            else:
+                remaining_qty = total_qty - partial_qty
+                side = "SELL" if position_type == "LONG" else "BUY"
+                partial_order = place_market_order(client, symbol, side, leverage, quantity=partial_qty,
+                                                   reduce_only=True)
+                if not partial_order:
+                    result = {"status": "error", "message": "Partial profit order failed"}
+                else:
+                    pnl_data = _calculate_pnl(client, symbol, position_type, current_price, partial_qty)
+                    result = {
+                        "status": "success",
+                        "partial_order": partial_order,
+                        "partial_quantity": partial_qty,
+                        "remaining_quantity": remaining_qty,
+                        "market_price": current_price,
+                        "pnl": pnl_data["pnl"],
+                        "investment": pnl_data["investment"],
+                        "pnl_percent_investment": pnl_data["pnl_percent_investment"],
+                        "pnl_percent_balance": pnl_data["pnl_percent_balance"]
+                    }
+        logger.debug(f"END: take_profit_partially - Output: result={result}")
         return result
     except Exception as e:
         logger.error(f"Error in take_profit_partially: {str(e)}")
-        return {"status": "error", "message": str(e)}
+        result = {"status": "error", "message": str(e)}
+        logger.debug(f"END: take_profit_partially - Output (error): result={result}")
+        return result
+
+def update_sl_tp_orders(client: UMFutures, symbol: str, position_type: str, stop_loss_price: float,
+                        take_profit_price: float, quantity: float) -> Dict:
+    """
+    Update the Stop Loss and Take Profit directly tied to the position in Binance Futures.
+    Adjusts for Hedge Mode vs. One-Way Mode and removes reduceOnly.
+    """
+    logger.debug(f"START: update_sl_tp_orders - Input: client={client}, symbol={symbol}, position_type={position_type}, "
+                 f"stop_loss_price={stop_loss_price}, take_profit_price={take_profit_price}, quantity={quantity}")
+    try:
+
+        # Step 3: Determine the side based on position type
+        side = "SELL" if position_type == "LONG" else "BUY"
+
+        # Step 4: Prepare order parameters
+        stop_loss_params = {
+            "symbol": symbol,
+            "side": side,
+            "type": "STOP_MARKET",
+            "stopPrice": str(stop_loss_price),
+            "quantity": str(quantity),
+            "closePosition": "True"
+        }
+        take_profit_params = {
+            "symbol": symbol,
+            "side": side,
+            "type": "TAKE_PROFIT_MARKET",
+            "stopPrice": str(take_profit_price),
+            "quantity": str(quantity),
+            "closePosition": "True"
+        }
+
+        # Step 6: Place Stop Loss order
+        stop_loss_order = client.new_order(**stop_loss_params)
+        if not stop_loss_order:
+            result = {"status": "error", "message": "Failed to place stop loss order"}
+            logger.debug(f"END: update_sl_tp_orders - Output (error): result={result}")
+            return result
+
+        # Step 7: Place Take Profit order
+        take_profit_order = client.new_order(**take_profit_params)
+        if not take_profit_order:
+            result = {"status": "error", "message": "Failed to place take profit order"}
+            logger.debug(f"END: update_sl_tp_orders - Output (error): result={result}")
+            return result
+
+        # Step 8: Success result
+        result = {
+            "status": "success",
+            "stop_loss_order": stop_loss_order,
+            "take_profit_order": take_profit_order,
+            "quantity": quantity
+        }
+        logger.debug(f"END: update_sl_tp_orders - Output: result={result}")
+        return result
+
+    except ClientError as e:
+        logger.error(f"Binance ClientError in update_sl_tp_orders: {e.error_message}")
+        result = {"status": "error", "message": f"Binance API error: {e.error_message}"}
+        logger.debug(f"END: update_sl_tp_orders - Output (error): result={result}")
+        return result
+    except Exception as e:
+        logger.error(f"Unexpected error in update_sl_tp_orders: {str(e)}")
+        result = {"status": "error", "message": str(e)}
+        logger.debug(f"END: update_sl_tp_orders - Output (error): result={result}")
+        return result
