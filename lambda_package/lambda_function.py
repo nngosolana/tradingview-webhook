@@ -175,13 +175,14 @@ class TradingSignalProcessor:
             new_tp = self.calculate_new_tp(data.close_price, data.sl1, position_type)
             partial_qty = abs(float(existing_position.positionAmt)) * 0.4
             remaining_qty = abs(float(existing_position.positionAmt)) - partial_qty
+            new_sl = (float(data.tp1) + float(existing_position.entryPrice)) / 2
             actions["take_partial_profit"] = {
                 "take_profit_price": new_tp,
                 "quantity": partial_qty
             }
             actions["clear_exit_orders"] = True
             actions["update_sl_tp"] = {
-                "stop_loss_price": float(data.tp1),
+                "stop_loss_price": new_sl,
                 "take_profit_price": new_tp,
                 "quantity": remaining_qty
             }

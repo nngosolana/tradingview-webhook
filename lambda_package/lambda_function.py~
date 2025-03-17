@@ -181,7 +181,7 @@ class TradingSignalProcessor:
             }
             actions["clear_exit_orders"] = True
             actions["update_sl_tp"] = {
-                "stop_loss_price": float(existing_position.entryPrice),
+                "stop_loss_price": float(data.tp1),
                 "take_profit_price": new_tp,
                 "quantity": remaining_qty
             }
