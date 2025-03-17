@@ -1,8 +1,7 @@
 import json
 import logging
 
-from binance_trade_wrapper import fetch_current_price
-from lambda_function import lambda_handler
+from lambda_package.lambda_function import lambda_handler
 
 # Configure logging
 logging.basicConfig(
@@ -10,6 +9,13 @@ logging.basicConfig(
     format='%(filename)s:%(funcName)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+def fetch_current_price(symbol: str = "DOGEUSDT") -> float:
+    """Mock current price since we're fully mocking data."""
+    logger.info(f"START: fetch_current_price - Input: symbol={symbol}")
+    price = fetch_current_price(symbol)
+    logger.info(f"END: fetch_current_price - Output: price={price}")
+    return price
 
 def generate_sample_signals(symbol: str = "DOGEUSDT"):
     """Generate sample signals with fully mocked data for testing."""

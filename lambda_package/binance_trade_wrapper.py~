@@ -45,26 +45,6 @@ def round_step_size(quantity: Union[float, Decimal], step_size: Union[float, Dec
     logger.debug(f"END: round_step_size - Output: result={result}")
     return result
 
-def fetch_current_price(symbol: str = "DOGEUSDT") -> float:
-    """Fetch the current market price from Binance Futures."""
-    logger.info(f"START: fetch_current_price - Input: symbol={symbol}")
-    try:
-        # Initialize Binance Futures client
-        # Assuming you have a way to get API keys; here we'll use a utility function
-        client = get_binance_client()  # Reuse the function from binance_trade_wrapper.py
-        if not client:
-            raise ValueError("Failed to initialize Binance client")
-
-        # Fetch the latest ticker price
-        ticker = client.ticker_price(symbol=symbol)
-        price = float(ticker["price"])  # Extract price as a float
-        logger.info(f"END: fetch_current_price - Output: price={price}")
-        return price
-
-    except Exception as e:
-        logger.error(f"Unexpected error fetching price for {symbol}: {str(e)}")
-        return 0.0  # Fallback value in case of error
-
 def get_tick_size(client: UMFutures, symbol: str) -> float:
     logger.debug(f"START: get_tick_size - Input: client={client}, symbol={symbol}")
     exchange_info = client.exchange_info()

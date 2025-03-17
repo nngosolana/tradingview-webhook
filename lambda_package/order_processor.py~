@@ -41,39 +41,33 @@ def place_stop_loss_order(client: UMFutures, symbol: str, position_type: str, st
 
 def create_position_order(client: UMFutures, symbol: str, position_type: str, stop_loss_price: float,
                           take_profit_price: float, quantity: float, investment_amount: float,
-                          market_price: float, leverage: int, order_type: str = "MARKET") -> Dict:
+                          market_price: float, leverage: int) -> Dict:
     logger.debug(f"START: create_position_order - Input: client={client}, symbol={symbol}, position_type={position_type}, "
                  f"stop_loss_price={stop_loss_price}, take_profit_price={take_profit_price}, quantity={quantity}, "
-                 f"investment_amount={investment_amount}, market_price={market_price}, leverage={leverage}, order_type={order_type}")
+                 f"investment_amount={investment_amount}, market_price={market_price}, leverage={leverage}")
     try:
         # Round values
         rounded_stop_loss = get_rounded_price(client, symbol, stop_loss_price)
         rounded_take_profit = get_rounded_price(client, symbol, take_profit_price)
-        rounded_price = get_rounded_price(client, symbol, market_price)  # This is limit price for LIMIT orders
+        rounded_market_price = get_rounded_price(client, symbol, market_price)
         _, quantity_precision = get_exchange_info(client, symbol)
         rounded_quantity = round(quantity, quantity_precision) if quantity_precision is not None else quantity
 
         logger.debug(f"Rounded values: stop_loss_price={rounded_stop_loss}, take_profit_price={rounded_take_profit}, "
-                     f"quantity={rounded_quantity}, price={rounded_price}")
+                     f"quantity={rounded_quantity}, market_price={rounded_market_price}")
 
         client.change_leverage(symbol=symbol, leverage=leverage)
         side = "BUY" if position_type == "LONG" else "SELL"
-
-        # Use place_order for LIMIT or MARKET
-        order = place_order(
-            client, symbol, side, order_type,
-            price=rounded_price if order_type == "LIMIT" else None,  # Pass price only for LIMIT
-            quantity=rounded_quantity
-        )
+        order = place_market_order(client, symbol, side, leverage, quantity=rounded_quantity)
         if not order:
-            result = {"status": "error", "message": f"{order_type} order placement failed"}
+            result = {"status": "error", "message": "Order placement failed"}
         else:
             result = {
                 "status": "success",
                 "order": order,
                 "trade_amount": investment_amount,
                 "quantity": rounded_quantity,
-                "market_price": rounded_price  # Represents limit price for LIMIT orders
+                "market_price": rounded_market_price
             }
         logger.debug(f"END: create_position_order - Output: result={result}")
         return result
