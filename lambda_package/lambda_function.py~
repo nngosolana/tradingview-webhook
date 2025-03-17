@@ -287,7 +287,8 @@ class TradingSignalProcessor:
             f"{'Close Price':<15} | {data.close_price:<20.5f} | {'TP1':<15} | {data.tp1 or 0:<20.5f}\n"
             f"{'SL1':<15} | {data.sl1 or 0:<20.5f} | {'TP2':<15} | {data.tp2 or 0:<20.5f}\n"
             f"{'SL2':<15} | {data.sl2 or 0:<20.5f} | {'Score':<15} | {locals().get('signal_score', 'N/A'):<20}\n"
-            f"{'Actions':<15} | {', '.join([k for k, v in actions.items() if v]) or 'None':<20} | {'PNL':<15} | {pnl_info:<20}\n"
+            f"{'Actions':<15} | {', '.join([k for k, v in actions.items() if v]) or 'None':<20}\n"
+            f"{'PNL':<15} | {pnl_info:<20}\n"
             f"```\n"
         )
         _send_discord_notification(discord_table)
