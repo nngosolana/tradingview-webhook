@@ -117,9 +117,14 @@ class TradingSignalProcessor:
                 actions["close_opposite"] = True
                 actions["clear_exit_orders"] = True
                 message = f"Will close opposite {opposite_position.position_type} position and open {position_type} limit order"
-            elif existing_position:
+
+            if existing_position:
                 message = f"{position_type} position exists, no action taken"
             else:
+                if opposite_position:
+                    actions["close_opposite"] = True
+                    message = f"Will close opposite {opposite_position.position_type} position and open {position_type} limit order"
+
                 # Calculate parameters for limit order
                 signal_score, _ = score_signal(self.client, data, position_type)
                 investment_adj = (signal_score / 100) * INVESTMENT_PERCENTAGE
@@ -175,13 +180,14 @@ class TradingSignalProcessor:
             new_tp = self.calculate_new_tp(data.close_price, data.sl1, position_type)
             partial_qty = abs(float(existing_position.positionAmt)) * 0.4
             remaining_qty = abs(float(existing_position.positionAmt)) - partial_qty
+            new_sl = (float(data.tp1) + float(existing_position.entryPrice)) / 2
             actions["take_partial_profit"] = {
                 "take_profit_price": new_tp,
                 "quantity": partial_qty
             }
             actions["clear_exit_orders"] = True
             actions["update_sl_tp"] = {
-                "stop_loss_price": float(data.tp1),
+                "stop_loss_price": new_sl,
                 "take_profit_price": new_tp,
                 "quantity": remaining_qty
             }

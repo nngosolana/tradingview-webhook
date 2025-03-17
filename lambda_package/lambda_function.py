@@ -113,13 +113,14 @@ class TradingSignalProcessor:
 
         # Step 1: Calculate all parameters and handle signal logic
         if signal_type == "confirmation":
-            if opposite_position:
-                actions["close_opposite"] = True
-                actions["clear_exit_orders"] = True
-                message = f"Will close opposite {opposite_position.position_type} position and open {position_type} limit order"
-            elif existing_position:
+
+            if existing_position:
                 message = f"{position_type} position exists, no action taken"
             else:
+                if opposite_position:
+                    actions["close_opposite"] = True
+                    message = f"Will close opposite {opposite_position.position_type} position and open {position_type} limit order"
+
                 # Calculate parameters for limit order
                 signal_score, _ = score_signal(self.client, data, position_type)
                 investment_adj = (signal_score / 100) * INVESTMENT_PERCENTAGE
